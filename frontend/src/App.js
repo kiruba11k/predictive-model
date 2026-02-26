@@ -18,7 +18,7 @@ const predict=async()=>{
 
 const res=await fetch(
 
-"https://your-backend.onrender.com/predict",
+"https://predictive-model-backend.onrender.com/predict",
 
 {
 
