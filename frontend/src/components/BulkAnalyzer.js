@@ -20,11 +20,13 @@ import {
   FaFileExcel,
   FaUpload,
   FaEye,
-  FaMagic
+  FaMagic,
+  FaFileDownload,
+  FaFileCsv as FaFileCsvIcon
 } from 'react-icons/fa';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  PieChart, Pie, Cell, LineChart, Line
+  PieChart, Pie, Cell
 } from 'recharts';
 
 const BulkAnalyzer = () => {
@@ -32,10 +34,12 @@ const BulkAnalyzer = () => {
   const [uploading, setUploading] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [results, setResults] = useState(null);
+  const [originalData, setOriginalData] = useState(null);
   const [error, setError] = useState(null);
   const [preview, setPreview] = useState([]);
   const [activeTab, setActiveTab] = useState('table');
   const [progress, setProgress] = useState(0);
+  const [downloadFormat, setDownloadFormat] = useState('csv'); // 'csv' or 'excel'
   const fileInputRef = useRef(null);
 
   const COLORS = ['#00ffff', '#ff00ff', '#00ff88', '#ff8800', '#8884d8'];
@@ -61,31 +65,42 @@ const BulkAnalyzer = () => {
       try {
         if (file.name.endsWith('.csv')) {
           const text = e.target.result;
-          const rows = text.split('\n').slice(0, 5);
-          const headers = rows[0].split(',');
-          const data = rows.slice(1).map(row => {
-            const values = row.split(',');
+          const rows = text.split('\n').filter(row => row.trim());
+          const headers = rows[0].split(',').map(h => h.trim());
+          
+          // Store original data for later use
+          const allData = rows.slice(1).map(row => {
+            const values = row.split(',').map(v => v.trim());
             return headers.reduce((obj, header, index) => {
-              obj[header.trim()] = values[index]?.trim() || '';
+              obj[header] = values[index] || '';
               return obj;
             }, {});
           });
-          setPreview({ headers, data });
+          setOriginalData(allData);
+          
+          // Preview first 5 rows
+          const previewData = allData.slice(0, 5);
+          setPreview({ headers, data: previewData });
         } else {
           // Handle Excel files
           const data = new Uint8Array(e.target.result);
           const workbook = XLSX.read(data, { type: 'array' });
           const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
           const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
-          const headers = jsonData[0];
-          const rows = jsonData.slice(1, 6);
-          const formattedData = rows.map(row => {
+          const headers = jsonData[0].map(h => String(h).trim());
+          
+          // Store original data
+          const allData = jsonData.slice(1).map(row => {
             return headers.reduce((obj, header, index) => {
               obj[header] = row[index] || '';
               return obj;
             }, {});
           });
-          setPreview({ headers, data: formattedData });
+          setOriginalData(allData);
+          
+          // Preview first 5 rows
+          const previewData = allData.slice(0, 5);
+          setPreview({ headers, data: previewData });
         }
       } catch (err) {
         console.error('Preview error:', err);
@@ -115,13 +130,12 @@ const BulkAnalyzer = () => {
       const formData = new FormData();
       formData.append('file', file);
 
-      // Upload file to backend
       const uploadRes = await axios.post(
         'https://predictive-model-backend.onrender.com/upload-bulk',
         formData,
         {
           headers: { 'Content-Type': 'multipart/form-data' },
-          timeout: 300000, // 5 minutes timeout for bulk processing
+          timeout: 300000,
           onUploadProgress: (progressEvent) => {
             const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
             setProgress(percentCompleted);
@@ -130,7 +144,6 @@ const BulkAnalyzer = () => {
       );
 
       if (uploadRes.data && uploadRes.data.jobId) {
-        // Poll for results
         pollForResults(uploadRes.data.jobId);
       } else {
         throw new Error('Invalid response from server');
@@ -175,25 +188,82 @@ const BulkAnalyzer = () => {
   };
 
   const downloadResults = () => {
-    if (!results) return;
+    if (!results || !originalData) return;
 
+    // Merge original data with prediction results
+    const mergedData = originalData.map((row, index) => {
+      const prediction = results.data[index] || {};
+      return {
+        ...row,
+        'Prediction': prediction.prediction || 'N/A',
+        'Probability': prediction.probability ? `${(prediction.probability * 100).toFixed(2)}%` : 'N/A',
+        'Success Probability': prediction.success_probability ? `${(prediction.success_probability * 100).toFixed(2)}%` : 'N/A',
+        'Confidence Score': prediction.confidence || 'N/A'
+      };
+    });
+
+    if (downloadFormat === 'csv') {
+      downloadAsCSV(mergedData);
+    } else {
+      downloadAsExcel(mergedData);
+    }
+  };
+
+  const downloadAsCSV = (data) => {
+    // Get all headers (original + new)
+    const headers = Object.keys(data[0]);
+    
+    // Create CSV content
     const csvContent = [
-      ['Pain Point', 'Prediction', 'Probability', 'Success Probability'],
-      ...results.data.map(row => [
-        row.pain_point,
-        row.prediction,
-        `${(row.probability * 100).toFixed(2)}%`,
-        `${(row.success_probability * 100).toFixed(2)}%`
-      ])
-    ].map(row => row.join(',')).join('\n');
+      headers.join(','),
+      ...data.map(row => 
+        headers.map(header => {
+          const value = row[header] || '';
+          // Escape commas and quotes
+          if (typeof value === 'string' && (value.includes(',') || value.includes('"'))) {
+            return `"${value.replace(/"/g, '""')}"`;
+          }
+          return value;
+        }).join(',')
+      )
+    ].join('\n');
 
-    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = `bulk-prediction-results-${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
     window.URL.revokeObjectURL(url);
+  };
+
+  const downloadAsExcel = (data) => {
+    // Create worksheet
+    const ws = XLSX.utils.json_to_sheet(data);
+    
+    // Create workbook
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Predictions');
+    
+    // Add summary sheet
+    const summaryData = [
+      ['Summary Statistics'],
+      ['Total Records', results.summary.total],
+      ['Successful', results.summary.successful],
+      ['Failed', results.summary.failed],
+      ['Success Rate', `${(results.summary.successful / results.summary.total * 100).toFixed(2)}%`],
+      [],
+      ['Prediction Distribution'],
+      ['Prediction', 'Count'],
+      ['Success', results.summary.successful],
+      ['Failure', results.summary.failed]
+    ];
+    
+    const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+    XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+    
+    // Save file
+    XLSX.writeFile(wb, `bulk-prediction-results-${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const renderSummary = () => {
@@ -314,37 +384,49 @@ const BulkAnalyzer = () => {
   };
 
   const renderTable = () => {
-    if (!results) return null;
+    if (!results || !originalData) return null;
+
+    // Merge data for display
+    const displayData = originalData.slice(0, 10).map((row, index) => {
+      const prediction = results.data[index] || {};
+      return { ...row, ...prediction };
+    });
+
+    const allHeaders = [...preview.headers, 'Prediction', 'Probability', 'Success Probability'];
 
     return (
       <div className="table-container">
         <table className="results-table">
           <thead>
             <tr>
-              <th>#</th>
-              <th>Pain Point</th>
-              <th>Prediction</th>
-              <th>Probability</th>
-              <th>Success Probability</th>
+              {allHeaders.map((header, index) => (
+                <th key={index}>{header}</th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {results.data.map((row, index) => (
-              <tr key={index}>
-                <td>{index + 1}</td>
-                <td>{row.pain_point}</td>
+            {displayData.map((row, rowIndex) => (
+              <tr key={rowIndex}>
+                {preview.headers.map((header, colIndex) => (
+                  <td key={colIndex}>{row[header]}</td>
+                ))}
                 <td>
-                  <span className={`prediction-badge ${row.prediction.toLowerCase()}`}>
+                  <span className={`prediction-badge ${row.prediction?.toLowerCase()}`}>
                     {row.prediction === 'Success' ? <FaCheck /> : <FaTimes />}
                     {row.prediction}
                   </span>
                 </td>
-                <td>{(row.probability * 100).toFixed(2)}%</td>
-                <td>{(row.success_probability * 100).toFixed(2)}%</td>
+                <td>{row.probability ? `${(row.probability * 100).toFixed(2)}%` : 'N/A'}</td>
+                <td>{row.success_probability ? `${(row.success_probability * 100).toFixed(2)}%` : 'N/A'}</td>
               </tr>
             ))}
           </tbody>
         </table>
+        {originalData.length > 10 && (
+          <div className="table-note">
+            Showing first 10 of {originalData.length} records. Download full results below.
+          </div>
+        )}
       </div>
     );
   };
@@ -457,13 +539,31 @@ const BulkAnalyzer = () => {
             <h3>
               <FaCheckCircle /> Analysis Results
             </h3>
-            <button className="download-button" onClick={downloadResults}>
-              <FaDownload />
-              Download CSV
-            </button>
+            <div className="download-controls">
+              <select 
+                className="format-select"
+                value={downloadFormat}
+                onChange={(e) => setDownloadFormat(e.target.value)}
+              >
+                <option value="csv">CSV Format</option>
+                <option value="excel">Excel Format</option>
+              </select>
+              <button className="download-button" onClick={downloadResults}>
+                {downloadFormat === 'csv' ? <FaFileCsvIcon /> : <FaFileExcel />}
+                Download Results
+              </button>
+            </div>
           </div>
 
           {renderSummary()}
+
+          <div className="results-info">
+            <p>
+              <FaDatabase /> Total Records: {results.summary.total} | 
+              <FaCheck /> Successful: {results.summary.successful} | 
+              <FaTimes /> Failed: {results.summary.failed}
+            </p>
+          </div>
 
           <div className="tabs">
             <button
