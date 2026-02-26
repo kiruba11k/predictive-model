@@ -1,180 +1,210 @@
-import React,{useState} from "react"
+import React, { useState } from "react";
 
-import axios from "axios"
+import axios from "axios";
 
-import {Canvas} from "@react-three/fiber"
+import { Canvas } from "@react-three/fiber";
 
-import {Float, OrbitControls} from "@react-three/drei"
+import { Float, OrbitControls } from "@react-three/drei";
 
-import {motion} from "framer-motion"
+import { motion } from "framer-motion";
 
-import "./App.css"
-
-
-
-function Cube(){
-
-return(
-
-<Float speed={3}>
-
-mesh>
-
-boxGeometry args={[2,2,2]}/>
-
-meshStandardMaterial
-
-color="#00ffff"
-
-metalness={1}
-
-roughness={0}
-
-/>
-
-</mesh>
-
-</Float>
-
-)
-
-}
+import "./App.css";
 
 
+// 3D Cube Component
 
-export default function App(){
+function Cube() {
 
+  return (
 
-const[pain,setPain]=useState("")
+    <Float speed={3} rotationIntensity={1} floatIntensity={2}>
 
-const[result,setResult]=useState(null)
+      <mesh>
 
-const[loading,setLoading]=useState(false)
+        <boxGeometry args={[2, 2, 2]} />
 
+        <meshStandardMaterial
 
+          color="#00ffff"
 
-const predict=async()=>{
+          metalness={1}
 
-setLoading(true)
+          roughness={0}
 
-const res=await axios.post(
+        />
 
-"https://predictive-model-backend.onrender.com/predict",
+      </mesh>
 
-{
+    </Float>
 
-pain_point:pain
-
-}
-
-)
-
-setResult(res.data)
-
-setLoading(false)
+  );
 
 }
 
 
-
-return(
-
-
-<div className="container">
+export default function App() {
 
 
-<Canvas className="bg">
+  const [pain, setPain] = useState("");
 
-ambientLight intensity={1}/>
+  const [result, setResult] = useState(null);
 
-pointLight position={[10,10,10]}/>
-
-<Cube/>
-
-<OrbitControls enableZoom={false}/>
-
-</Canvas>
+  const [loading, setLoading] = useState(false);
 
 
 
-<motion.div
+  const predict = async () => {
 
-className="card"
+    try {
 
-initial={{opacity:0,y:50}}
-
-animate={{opacity:1,y:0}}
-
-transition={{duration:1}}
-
->
+      setLoading(true);
 
 
-<h1>
+      const res = await axios.post(
 
-AI Predictive Engine
+        "https://predictive-model-backend.onrender.com/predict",
 
-</h1>
+        {
 
+          pain_point: pain,
 
+        }
 
-<input
-
-placeholder="Enter company pain point..."
-
-onChange={(e)=>setPain(e.target.value)}
-
-/>
+      );
 
 
+      setResult(res.data);
 
-<button onClick={predict}>
+    }
 
-Predict
+    catch (err) {
 
-</button>
+      console.error(err);
 
+      alert("API Error");
 
+    }
 
-{loading && (
+    finally {
 
-<p>Analyzing...</p>
+      setLoading(false);
 
-)}
+    }
+
+  };
 
 
 
-{result && (
+  return (
 
-<div className="result">
-
-
-<h2>
-
-{result.prediction}
-
-</h2>
+    <div className="container">
 
 
-<p>
-
-Probability:
-
-{(result.probability*100).toFixed(2)}%
-
-</p>
+      {/* 3D Background */}
 
 
-</div>
-
-)}
+      <Canvas className="bg">
 
 
-</motion.div>
+        <ambientLight intensity={1} />
 
 
-</div>
+        <pointLight position={[10, 10, 10]} />
 
-)
+
+        <Cube />
+
+
+        <OrbitControls enableZoom={false} />
+
+
+      </Canvas>
+
+
+
+      {/* UI Card */}
+
+
+      <motion.div
+
+        className="card"
+
+        initial={{ opacity: 0, y: 50 }}
+
+        animate={{ opacity: 1, y: 0 }}
+
+        transition={{ duration: 1 }}
+
+      >
+
+
+        <h1>
+
+          AI Predictive Engine
+
+        </h1>
+
+
+
+        <input
+
+          placeholder="Enter company pain point..."
+
+          value={pain}
+
+          onChange={(e) => setPain(e.target.value)}
+
+        />
+
+
+
+        <button onClick={predict}>
+
+          Predict
+
+        </button>
+
+
+
+        {loading && (
+
+          <p>Analyzing...</p>
+
+        )}
+
+
+
+        {result && (
+
+          <div className="result">
+
+
+            <h2>
+
+              {result.prediction}
+
+            </h2>
+
+
+            <p>
+
+              Probability:
+
+              {(result.probability * 100).toFixed(2)}%
+
+            </p>
+
+
+          </div>
+
+        )}
+
+
+      </motion.div>
+
+
+    </div>
+
+  );
 
 }
