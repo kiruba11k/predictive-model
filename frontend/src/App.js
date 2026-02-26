@@ -1,210 +1,252 @@
 import React, { useState } from "react";
-
 import axios from "axios";
 
 import { Canvas } from "@react-three/fiber";
-
-import { Float, OrbitControls } from "@react-three/drei";
+import { Float, OrbitControls, Stars } from "@react-three/drei";
 
 import { motion } from "framer-motion";
 
 import "./App.css";
 
 
-// 3D Cube Component
+// 3D Floating Sphere
 
-function Cube() {
+function Sphere() {
 
-  return (
+return (
 
-    <Float speed={3} rotationIntensity={1} floatIntensity={2}>
+<Float speed={2}>
 
-      <mesh>
+<mesh>
 
-        <boxGeometry args={[2, 2, 2]} />
+<sphereGeometry args={[1.5, 64, 64]} />
 
-        <meshStandardMaterial
+<meshStandardMaterial
 
-          color="#00ffff"
+color="#00ffff"
 
-          metalness={1}
+metalness={1}
 
-          roughness={0}
+roughness={0}
 
-        />
+/>
 
-      </mesh>
+</mesh>
 
-    </Float>
+</Float>
 
-  );
+)
 
 }
+
+
+// Card animation
+
+const cardAnim = {
+
+hidden: { opacity: 0, y: 50 },
+
+show: { opacity: 1, y: 0 }
+
+}
+
 
 
 export default function App() {
 
 
-  const [pain, setPain] = useState("");
+const [pain, setPain] = useState("");
 
-  const [result, setResult] = useState(null);
+const [result, setResult] = useState(null);
 
-  const [loading, setLoading] = useState(false);
+const [loading, setLoading] = useState(false);
 
 
 
-  const predict = async () => {
+const predict = async () => {
 
-    try {
+setLoading(true);
 
-      setLoading(true);
+try {
 
+const res = await axios.post(
 
-      const res = await axios.post(
+"https://predictive-model-backend.onrender.com/predict",
 
-        "https://predictive-model-backend.onrender.com/predict",
+{
 
-        {
+pain_point: pain
 
-          pain_point: pain,
+}
 
-        }
+);
 
-      );
+setResult(res.data);
 
+}
 
-      setResult(res.data);
+catch {
 
-    }
+alert("Backend error");
 
-    catch (err) {
+}
 
-      console.error(err);
+setLoading(false);
 
-      alert("API Error");
+};
 
-    }
 
-    finally {
 
-      setLoading(false);
+return (
 
-    }
 
-  };
+<div className="main">
 
 
 
-  return (
+{/* 3D BACKGROUND */}
 
-    <div className="container">
 
 
-      {/* 3D Background */}
+<Canvas className="canvas">
 
 
-      <Canvas className="bg">
+<ambientLight intensity={1} />
 
+<pointLight position={[10,10,10]} />
 
-        <ambientLight intensity={1} />
 
+<Sphere />
 
-        <pointLight position={[10, 10, 10]} />
 
+<Stars />
 
-        <Cube />
 
+<OrbitControls enableZoom={false} />
 
-        <OrbitControls enableZoom={false} />
 
+</Canvas>
 
-      </Canvas>
 
 
+{/* SIDEBAR */}
 
-      {/* UI Card */}
 
 
-      <motion.div
+<div className="sidebar">
 
-        className="card"
 
-        initial={{ opacity: 0, y: 50 }}
+<h2>AI Dashboard</h2>
 
-        animate={{ opacity: 1, y: 0 }}
 
-        transition={{ duration: 1 }}
+<button>
 
-      >
+Predict
 
+</button>
 
-        <h1>
 
-          AI Predictive Engine
+<button>
 
-        </h1>
+Analytics
 
+</button>
 
 
-        <input
+<button>
 
-          placeholder="Enter company pain point..."
+Settings
 
-          value={pain}
+</button>
 
-          onChange={(e) => setPain(e.target.value)}
 
-        />
+</div>
 
 
 
-        <button onClick={predict}>
+{/* MAIN CARD */}
 
-          Predict
 
-        </button>
 
+<motion.div
 
+className="card"
 
-        {loading && (
+variants={cardAnim}
 
-          <p>Analyzing...</p>
+initial="hidden"
 
-        )}
+animate="show"
 
+transition={{ duration: 1 }}
 
+>
 
-        {result && (
 
-          <div className="result">
+<h1>
 
+AI Lead Success Predictor
 
-            <h2>
+</h1>
 
-              {result.prediction}
 
-            </h2>
 
+<input
 
-            <p>
+value={pain}
 
-              Probability:
+onChange={(e)=>setPain(e.target.value)}
 
-              {(result.probability * 100).toFixed(2)}%
+placeholder="Enter company pain point"
 
-            </p>
+/>
 
 
-          </div>
 
-        )}
+<button
 
+onClick={predict}
 
-      </motion.div>
+>
 
 
-    </div>
+{loading ? "Analyzing..." : "Predict"}
 
-  );
 
+</button>
+
+
+
+{result && (
+
+<div className="result">
+
+
+<h2>
+
+{result.prediction}
+
+</h2>
+
+
+<p>
+
+Probability:
+
+{(result.probability * 100).toFixed(2)}%
+
+</p>
+
+
+</div>
+
+)}
+
+
+</motion.div>
+
+
+</div>
+
+);
 }
