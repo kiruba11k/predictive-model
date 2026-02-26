@@ -1,8 +1,15 @@
+import os
+
 from sqlalchemy import create_engine, Column, Integer, String, Float
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 
-DATABASE_URL = "sqlite:////var/data/leads.db"
+# Render free tier writable temp path
+
+DATABASE_PATH = "/tmp/leads.db"
+
+DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
+
 
 engine = create_engine(
 
@@ -14,6 +21,10 @@ engine = create_engine(
 
 
 SessionLocal = sessionmaker(
+
+    autocommit=False,
+
+    autoflush=False,
 
     bind=engine
 
@@ -27,7 +38,7 @@ class Lead(Base):
 
     __tablename__ = "leads"
 
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True, index=True)
 
     pain_point = Column(String)
 
@@ -38,4 +49,6 @@ class Lead(Base):
     actual = Column(String)
 
 
-Base.metadata.create_all(engine)
+# Create DB file in /tmp
+
+Base.metadata.create_all(bind=engine)
