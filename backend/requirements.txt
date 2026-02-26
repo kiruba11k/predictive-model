@@ -1,9 +1,10 @@
+pandas
+schedule
 fastapi
 uvicorn
 sentence-transformers
 scikit-learn
-psycopg2-binary
 sqlalchemy
 joblib
-pandas
+numpy
 schedule
