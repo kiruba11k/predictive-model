@@ -1494,3 +1494,102 @@ body::before {
     justify-content: center;
   }
 }
+/* Add to your App.css */
+
+.summary-icon {
+  width: 50px;
+  height: 50px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  background: rgba(0, 255, 255, 0.1);
+  color: var(--primary);
+}
+
+.summary-icon.success-icon {
+  background: rgba(0, 255, 136, 0.1);
+  color: var(--success);
+}
+
+.summary-icon.failure-icon {
+  background: rgba(255, 68, 68, 0.1);
+  color: var(--danger);
+}
+
+.summary-icon.rate-icon {
+  background: rgba(255, 170, 0, 0.1);
+  color: var(--warning);
+}
+
+.prediction-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 1rem;
+  border-radius: 20px;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.prediction-badge.success {
+  background: rgba(0, 255, 136, 0.2);
+  color: var(--success);
+  border: 1px solid var(--success);
+}
+
+.prediction-badge.failure {
+  background: rgba(255, 68, 68, 0.2);
+  color: var(--danger);
+  border: 1px solid var(--danger);
+}
+
+.prediction-badge svg {
+  font-size: 0.8rem;
+}
+
+.file-info svg {
+  margin-right: 0.5rem;
+  color: var(--primary);
+}
+
+.bulk-header h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.bulk-header h2 svg {
+  color: var(--primary);
+  animation: pulse 2s infinite;
+}
+
+.preview-section h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--primary);
+}
+
+.results-header h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.results-header h3 svg {
+  color: var(--success);
+}
+
+.tab svg {
+  margin-right: 0.5rem;
+}
+
+.chart-card h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--primary);
+  margin-bottom: 1rem;
+}
