@@ -1,4 +1,4 @@
-body{
+body {
 
 margin:0;
 
@@ -11,29 +11,32 @@ color:white;
 }
 
 
-.main{
+/* Layout */
 
-height:100vh;
+
+.layout {
 
 display:flex;
 
-align-items:center;
+height:100vh;
 
-justify-content:center;
+width:100vw;
+
+overflow:hidden;
 
 }
 
 
-/* 3D Canvas */
+/* Canvas */
 
 
-.canvas{
+.canvas {
 
 position:fixed;
 
-height:100%;
-
 width:100%;
+
+height:100%;
 
 z-index:-1;
 
@@ -43,15 +46,9 @@ z-index:-1;
 /* Sidebar */
 
 
-.sidebar{
+.sidebar {
 
-position:absolute;
-
-left:0;
-
-height:100%;
-
-width:200px;
+width:220px;
 
 background:rgba(255,255,255,0.05);
 
@@ -59,13 +56,61 @@ backdrop-filter: blur(20px);
 
 padding:20px;
 
+display:flex;
+
+flex-direction:column;
+
+gap:15px;
+
 }
 
 
-/* Glass Card */
+.menuBtn {
+
+padding:10px;
+
+background:none;
+
+border:1px solid cyan;
+
+color:white;
+
+cursor:pointer;
+
+border-radius:8px;
+
+}
 
 
-.card{
+.menuBtn:hover {
+
+background:cyan;
+
+color:black;
+
+}
+
+
+/* Content */
+
+
+.content {
+
+flex:1;
+
+display:flex;
+
+justify-content:center;
+
+align-items:center;
+
+}
+
+
+/* Card */
+
+
+.card {
 
 background:rgba(255,255,255,0.05);
 
@@ -77,14 +122,18 @@ backdrop-filter: blur(20px);
 
 box-shadow:
 
-0 0 20px cyan,
+0 0 20px cyan;
 
-0 0 60px blue;
+display:flex;
+
+flex-direction:column;
+
+align-items:center;
 
 }
 
 
-input{
+input {
 
 width:300px;
 
@@ -92,14 +141,14 @@ padding:12px;
 
 margin-top:20px;
 
-border:none;
-
 border-radius:10px;
+
+border:none;
 
 }
 
 
-button{
+button {
 
 margin-top:20px;
 
@@ -109,15 +158,7 @@ border:none;
 
 border-radius:10px;
 
-background:linear-gradient(
-
-90deg,
-
-cyan,
-
-blue
-
-);
+background:linear-gradient(90deg,cyan,blue);
 
 color:white;
 
@@ -126,27 +167,23 @@ cursor:pointer;
 }
 
 
-.result{
+.result {
 
 margin-top:20px;
+
+text-align:center;
 
 }
 
 
-/* Responsive */
+/* Mobile */
 
 
 @media(max-width:768px){
 
-.sidebar{
+.sidebar {
 
 display:none;
-
-}
-
-.card{
-
-width:90%;
 
 }
 
