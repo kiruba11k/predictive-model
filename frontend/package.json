@@ -1,0 +1,15 @@
+{
+"dependencies": {
+
+"react": "^18",
+
+"three": "^0.160",
+
+"framer-motion": "^10",
+
+"@react-three/fiber": "^8",
+
+"@react-three/drei": "^9"
+
+}
+}
