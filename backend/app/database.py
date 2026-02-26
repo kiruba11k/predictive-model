@@ -2,8 +2,7 @@ from sqlalchemy import create_engine, Column, Integer, String, Float
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 
-DATABASE_URL = "sqlite:///./leads.db"
-
+DATABASE_URL = "sqlite:////var/data/leads.db"
 
 engine = create_engine(
 
