@@ -9,244 +9,193 @@ import { motion } from "framer-motion";
 import "./App.css";
 
 
-// 3D Floating Sphere
-
 function Sphere() {
 
-return (
+  return (
 
-<Float speed={2}>
+    <Float speed={2}>
 
-<mesh>
+      <mesh>
 
-<sphereGeometry args={[1.5, 64, 64]} />
+        <sphereGeometry args={[1.5, 64, 64]} />
 
-<meshStandardMaterial
+        <meshStandardMaterial
 
-color="#00ffff"
+          color="#00ffff"
 
-metalness={1}
+          metalness={1}
 
-roughness={0}
+          roughness={0}
 
-/>
+        />
 
-</mesh>
+      </mesh>
 
-</Float>
+    </Float>
 
-)
-
-}
-
-
-// Card animation
-
-const cardAnim = {
-
-hidden: { opacity: 0, y: 50 },
-
-show: { opacity: 1, y: 0 }
+  );
 
 }
-
 
 
 export default function App() {
 
+  const [pain, setPain] = useState("");
 
-const [pain, setPain] = useState("");
+  const [result, setResult] = useState(null);
 
-const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
 
-const [loading, setLoading] = useState(false);
 
+  const predict = async () => {
 
+    setLoading(true);
 
-const predict = async () => {
+    try {
 
-setLoading(true);
+      const res = await axios.post(
 
-try {
+        "https://predictive-model-backend.onrender.com/predict",
 
-const res = await axios.post(
+        { pain_point: pain }
 
-"https://predictive-model-backend.onrender.com/predict",
+      );
 
-{
+      setResult(res.data);
 
-pain_point: pain
+    }
 
-}
+    catch {
 
-);
+      alert("API Error");
 
-setResult(res.data);
+    }
 
-}
+    setLoading(false);
 
-catch {
+  };
 
-alert("Backend error");
 
-}
+  return (
 
-setLoading(false);
+    <div className="layout">
 
-};
 
+      {/* 3D BACKGROUND */}
 
 
-return (
+      <Canvas className="canvas">
 
+        <ambientLight intensity={1} />
 
-<div className="main">
+        <pointLight position={[10,10,10]} />
 
+        <Sphere />
 
+        <Stars />
 
-{/* 3D BACKGROUND */}
+        <OrbitControls enableZoom={false} />
 
+      </Canvas>
 
 
-<Canvas className="canvas">
 
+      {/* SIDEBAR */}
 
-<ambientLight intensity={1} />
 
-<pointLight position={[10,10,10]} />
+      <div className="sidebar">
 
+        <h2>AI Dashboard</h2>
 
-<Sphere />
+        <button className="menuBtn">Predict</button>
 
+        <button className="menuBtn">Analytics</button>
 
-<Stars />
+        <button className="menuBtn">Settings</button>
 
+      </div>
 
-<OrbitControls enableZoom={false} />
 
 
-</Canvas>
+      {/* MAIN CONTENT */}
 
 
+      <div className="content">
 
-{/* SIDEBAR */}
 
+        <motion.div
 
+          className="card"
 
-<div className="sidebar">
+          initial={{opacity:0,y:50}}
 
+          animate={{opacity:1,y:0}}
 
-<h2>AI Dashboard</h2>
+        >
 
 
-<button>
+          <h1>
 
-Predict
+            AI Lead Predictor
 
-</button>
+          </h1>
 
 
-<button>
 
-Analytics
+          <input
 
-</button>
+            value={pain}
 
+            onChange={(e)=>setPain(e.target.value)}
 
-<button>
+            placeholder="Enter company pain point"
 
-Settings
+          />
 
-</button>
 
 
-</div>
+          <button onClick={predict}>
 
+            {loading ? "Analyzing..." : "Predict"}
 
+          </button>
 
-{/* MAIN CARD */}
 
 
+          {result && (
 
-<motion.div
+            <div className="result">
 
-className="card"
 
-variants={cardAnim}
+              <h2>
 
-initial="hidden"
+                {result.prediction}
 
-animate="show"
+              </h2>
 
-transition={{ duration: 1 }}
 
->
+              <p>
 
+                Probability:
 
-<h1>
+                {(result.probability*100).toFixed(2)}%
 
-AI Lead Success Predictor
+              </p>
 
-</h1>
 
+            </div>
 
+          )}
 
-<input
 
-value={pain}
+        </motion.div>
 
-onChange={(e)=>setPain(e.target.value)}
 
-placeholder="Enter company pain point"
+      </div>
 
-/>
 
+    </div>
 
+  );
 
-<button
-
-onClick={predict}
-
->
-
-
-{loading ? "Analyzing..." : "Predict"}
-
-
-</button>
-
-
-
-{result && (
-
-<div className="result">
-
-
-<h2>
-
-{result.prediction}
-
-</h2>
-
-
-<p>
-
-Probability:
-
-{(result.probability * 100).toFixed(2)}%
-
-</p>
-
-
-</div>
-
-)}
-
-
-</motion.div>
-
-
-</div>
-
-);
 }
