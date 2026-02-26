@@ -1,201 +1,33 @@
 import React, { useState } from "react";
-import axios from "axios";
-
-import { Canvas } from "@react-three/fiber";
-import { Float, OrbitControls, Stars } from "@react-three/drei";
-
-import { motion } from "framer-motion";
+import Navbar from "./components/Navbar";
+import Sidebar from "./components/Sidebar";
+import Predictor from "./components/Predictor";
+import Dashboard from "./components/Dashboard";
 
 import "./App.css";
 
-
-function Sphere() {
-
-  return (
-
-    <Float speed={2}>
-
-      <mesh>
-
-        <sphereGeometry args={[1.5, 64, 64]} />
-
-        <meshStandardMaterial
-
-          color="#00ffff"
-
-          metalness={1}
-
-          roughness={0}
-
-        />
-
-      </mesh>
-
-    </Float>
-
-  );
-
-}
-
-
 export default function App() {
 
-  const [pain, setPain] = useState("");
+const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const [result, setResult] = useState(null);
+return (
 
-  const [loading, setLoading] = useState(false);
+<div className="app">
 
+<Navbar toggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
 
-  const predict = async () => {
+<Sidebar open={sidebarOpen} />
 
-    setLoading(true);
+<main className="main">
 
-    try {
+<Dashboard />
 
-      const res = await axios.post(
+<Predictor />
 
-        "https://predictive-model-backend.onrender.com/predict",
+</main>
 
-        { pain_point: pain }
+</div>
 
-      );
-
-      setResult(res.data);
-
-    }
-
-    catch {
-
-      alert("API Error");
-
-    }
-
-    setLoading(false);
-
-  };
-
-
-  return (
-
-    <div className="layout">
-
-
-      {/* 3D BACKGROUND */}
-
-
-      <Canvas className="canvas">
-
-        <ambientLight intensity={1} />
-
-        <pointLight position={[10,10,10]} />
-
-        <Sphere />
-
-        <Stars />
-
-        <OrbitControls enableZoom={false} />
-
-      </Canvas>
-
-
-
-      {/* SIDEBAR */}
-
-
-      <div className="sidebar">
-
-        <h2>AI Dashboard</h2>
-
-        <button className="menuBtn">Predict</button>
-
-        <button className="menuBtn">Analytics</button>
-
-        <button className="menuBtn">Settings</button>
-
-      </div>
-
-
-
-      {/* MAIN CONTENT */}
-
-
-      <div className="content">
-
-
-        <motion.div
-
-          className="card"
-
-          initial={{opacity:0,y:50}}
-
-          animate={{opacity:1,y:0}}
-
-        >
-
-
-          <h1>
-
-            AI Lead Predictor
-
-          </h1>
-
-
-
-          <input
-
-            value={pain}
-
-            onChange={(e)=>setPain(e.target.value)}
-
-            placeholder="Enter company pain point"
-
-          />
-
-
-
-          <button onClick={predict}>
-
-            {loading ? "Analyzing..." : "Predict"}
-
-          </button>
-
-
-
-          {result && (
-
-            <div className="result">
-
-
-              <h2>
-
-                {result.prediction}
-
-              </h2>
-
-
-              <p>
-
-                Probability:
-
-                {(result.probability*100).toFixed(2)}%
-
-              </p>
-
-
-            </div>
-
-          )}
-
-
-        </motion.div>
-
-
-      </div>
-
-
-    </div>
-
-  );
+);
 
 }
