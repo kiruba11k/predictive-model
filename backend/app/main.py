@@ -1,7 +1,6 @@
 from fastapi import FastAPI
-from database import SessionLocal, Lead
-from model import Predictor
-
+from app.database import SessionLocal, Lead
+from app.model import Predictor
 
 app = FastAPI()
 
