@@ -20,16 +20,17 @@ export default function Predictor() {
 
   const predict = async (isRetry = false) => {
     if (!input.trim()) {
-      setError("Please enter a pain point");
+      setError({
+        message: "Please enter a pain point",
+        type: "validation"
+      });
       return;
     }
 
-    // Cancel previous request if exists
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
 
-    // Create new abort controller for this request
     abortControllerRef.current = new AbortController();
 
     setLoading(true);
@@ -40,28 +41,28 @@ export default function Predictor() {
     }
 
     try {
+      // Fix: Send as query parameter, not in body
       const res = await axios.post(
-        "https://predictive-model-backend.onrender.com/predict",
-        { pain_point: input },
+        `https://predictive-model-backend.onrender.com/predict?pain_point=${encodeURIComponent(input)}`,
+        null, // No body
         {
           headers: {
-            'Content-Type': 'application/json',
+            'Accept': 'application/json',
           },
-          timeout: 15000, // Increased to 15 seconds
+          timeout: 30000, // Increased to 30 seconds for cold start
           signal: abortControllerRef.current.signal
         }
       );
       
       if (res.data) {
         setResult(res.data);
-        setRetryCount(0); // Reset retry count on success
+        setRetryCount(0);
+        setError(null);
       } else {
         throw new Error("Invalid response from server");
       }
     } catch (err) {
-      // Handle different types of errors
       if (axios.isCancel(err)) {
-        console.log('Request canceled:', err.message);
         return;
       }
 
@@ -73,20 +74,23 @@ export default function Predictor() {
       if (err.code === 'ECONNABORTED' || err.message.includes('timeout')) {
         errorMessage = "Request timed out. The server is taking too long to respond.";
         errorType = "timeout";
-      } else if (!err.response && err.message === 'Network Error') {
-        errorMessage = "Cannot connect to the server. Please check your internet connection.";
-        errorType = "network";
-      } else if (err.response?.status === 429) {
-        errorMessage = "Too many requests. Please wait a moment and try again.";
-        errorType = "rate_limit";
-      } else if (err.response?.status === 503 || err.response?.status === 504) {
-        errorMessage = "Server is temporarily unavailable. Please try again later.";
-        errorType = "server_unavailable";
+      } else if (!err.response) {
+        if (err.message === 'Network Error') {
+          errorMessage = "Cannot connect to the server. This usually happens when the Render.com free tier server is spinning up (takes 30-60 seconds). Please wait and try again.";
+          errorType = "network";
+        } else {
+          errorMessage = err.message;
+          errorType = "network";
+        }
+      } else if (err.response?.status === 422) {
+        errorMessage = "Invalid request format. Please check your input.";
+        errorType = "validation";
       } else if (err.response?.status === 500) {
-        errorMessage = "Server error occurred. Our team has been notified.";
+        errorMessage = "Server error occurred. The model might still be loading.";
         errorType = "server_error";
       } else {
-        errorMessage = err.response?.data?.message || 
+        errorMessage = err.response?.data?.detail || 
+                      err.response?.data?.message || 
                       err.message || 
                       "Failed to get prediction. Please try again.";
       }
@@ -100,7 +104,6 @@ export default function Predictor() {
       setResult(null);
     } finally {
       setLoading(false);
-      abortControllerRef.current = null;
     }
   };
 
@@ -125,98 +128,49 @@ export default function Predictor() {
     }
   };
 
-  // Render error message based on type
   const renderError = () => {
     if (!error) return null;
-
-    const errorIcons = {
-      timeout: <FaClock className="error-icon" />,
-      network: <FaServer className="error-icon" />,
-      rate_limit: <FaExclamationTriangle className="error-icon" />,
-      server_error: <FaExclamationTriangle className="error-icon" />,
-      server_unavailable: <FaServer className="error-icon" />,
-      cancelled: <FaExclamationTriangle className="error-icon" />,
-      default: <FaExclamationTriangle className="error-icon" />
-    };
-
-    const errorMessages = {
-      timeout: {
-        title: "Request Timeout",
-        suggestion: "The server might be busy. You can try:"
-      },
-      network: {
-        title: "Network Error",
-        suggestion: "Please check:"
-      },
-      rate_limit: {
-        title: "Rate Limit Exceeded",
-        suggestion: "Suggestions:"
-      },
-      server_error: {
-        title: "Server Error",
-        suggestion: "What you can do:"
-      },
-      server_unavailable: {
-        title: "Server Unavailable",
-        suggestion: "The server might be:"
-      },
-      default: {
-        title: "Error",
-        suggestion: "Suggestions:"
-      }
-    };
-
-    const currentError = errorMessages[error.type] || errorMessages.default;
 
     return (
       <div className={`error-container ${error.type}`}>
         <div className="error-header">
-          {errorIcons[error.type] || errorIcons.default}
-          <span className="error-title">{currentError.title}</span>
+          {error.type === 'timeout' && <FaClock className="error-icon" />}
+          {error.type === 'network' && <FaServer className="error-icon" />}
+          {error.type === 'validation' && <FaExclamationTriangle className="error-icon" />}
+          {!['timeout', 'network', 'validation'].includes(error.type) && <FaExclamationTriangle className="error-icon" />}
+          <span className="error-title">
+            {error.type === 'timeout' && 'Request Timeout'}
+            {error.type === 'network' && 'Network Error'}
+            {error.type === 'validation' && 'Validation Error'}
+            {error.type === 'server_error' && 'Server Error'}
+            {!['timeout', 'network', 'validation', 'server_error'].includes(error.type) && 'Error'}
+          </span>
         </div>
         
         <p className="error-message">{error.message}</p>
         
-        <div className="error-suggestions">
-          <p className="suggestion-title">{currentError.suggestion}</p>
-          <ul className="suggestion-list">
-            {error.type === 'timeout' && (
-              <>
-                <li>• Wait a few seconds and try again</li>
-                <li>• Check if the input is too complex</li>
-                <li>• Try with a shorter pain point description</li>
-              </>
-            )}
-            {error.type === 'network' && (
-              <>
-                <li>• Your internet connection</li>
-                <li>• If the server is online (render.com free tier might be sleeping)</li>
-                <li>• Firewall or proxy settings</li>
-              </>
-            )}
-            {error.type === 'rate_limit' && (
-              <>
-                <li>• Wait 30-60 seconds before trying again</li>
-                <li>• Reduce the frequency of requests</li>
-                <li>• Try again with a different input</li>
-              </>
-            )}
-            {(error.type === 'server_error' || error.type === 'server_unavailable') && (
-              <>
-                <li>• Wait a few minutes and try again</li>
-                <li>• Check if the server is under maintenance</li>
-                <li>• Try again later</li>
-              </>
-            )}
-            {!error.type && (
-              <>
-                <li>• Check your input and try again</li>
-                <li>• Try with a different pain point</li>
-                <li>• Refresh the page and try again</li>
-              </>
-            )}
-          </ul>
-        </div>
+        {error.type === 'network' && (
+          <div className="error-suggestions">
+            <p className="suggestion-title">The Render.com free tier server might be sleeping. This is normal! Here's what's happening:</p>
+            <ul className="suggestion-list">
+              <li>• Free tier servers spin down after 15 minutes of inactivity</li>
+              <li>• It takes 30-60 seconds to wake up on first request</li>
+              <li>• Please wait a moment and try again</li>
+              <li>• The server will respond faster after the first successful request</li>
+            </ul>
+          </div>
+        )}
+
+        {error.type === 'timeout' && (
+          <div className="error-suggestions">
+            <p className="suggestion-title">The server is taking longer than expected:</p>
+            <ul className="suggestion-list">
+              <li>• Click "Try Again" to retry the request</li>
+              <li>• The model might be processing a complex input</li>
+              <li>• Try with a shorter pain point description</li>
+            </ul>
+          </div>
+        )}
 
         <div className="error-actions">
           <button 
@@ -227,22 +181,15 @@ export default function Predictor() {
             <FaRedo className={loading ? 'spinner' : ''} />
             Try Again
           </button>
-          {error.type === 'timeout' && (
+          {loading && (
             <button 
               className="cancel-button"
               onClick={handleCancel}
             >
-              Cancel Request
+              Cancel
             </button>
           )}
         </div>
-
-        {error.details && (
-          <details className="error-details">
-            <summary>Technical Details</summary>
-            <pre>{JSON.stringify(error.details, null, 2)}</pre>
-          </details>
-        )}
       </div>
     );
   };
@@ -256,7 +203,9 @@ export default function Predictor() {
       
       <div className="predictor-description">
         <p>Enter your lead's pain point to get AI-powered prediction of conversion success probability.</p>
-        <p className="note">Note: The server might take 10-15 seconds to respond if it's starting up (free tier on render.com)</p>
+        <div className="note">
+          <strong>⚠️ Note:</strong> The server is on Render.com free tier. First request may take 30-60 seconds to wake up the server. Please be patient!
+        </div>
       </div>
 
       <div className="input-group">
@@ -269,7 +218,7 @@ export default function Predictor() {
           onChange={(e) => setInput(e.target.value)}
           onKeyPress={handleKeyPress}
           disabled={loading}
-          className={error ? 'error' : ''}
+          className={error?.type === 'validation' ? 'error' : ''}
         />
       </div>
 
@@ -282,21 +231,12 @@ export default function Predictor() {
           {loading ? (
             <>
               <FaSpinner className="spinner" />
-              <span>Analyzing... (this may take up to 15s)</span>
+              <span>Waking up server... (30-60s)</span>
             </>
           ) : (
             <span>Predict Success Rate</span>
           )}
         </button>
-
-        {loading && (
-          <button 
-            className="cancel-button"
-            onClick={handleCancel}
-          >
-            Cancel
-          </button>
-        )}
       </div>
 
       {loading && (
@@ -305,7 +245,9 @@ export default function Predictor() {
             <div className="loading-bar"></div>
           </div>
           <p className="loading-text">Connecting to server... Please wait</p>
-          <p className="loading-subtext">Free tier servers may take 10-15 seconds to wake up</p>
+          <p className="loading-subtext">
+            {retryCount > 0 ? `Retry attempt ${retryCount}...` : 'Free tier server waking up (30-60 seconds)'}
+          </p>
         </div>
       )}
 
@@ -343,17 +285,10 @@ export default function Predictor() {
               </div>
             </div>
 
-            {result.confidence && (
-              <div className="confidence-score">
-                <span>Confidence Score:</span>
-                <span className="confidence-value">{result.confidence}</span>
-              </div>
-            )}
-
             {retryCount > 0 && (
               <div className="retry-info">
                 <FaRedo />
-                <span>Successfully connected after {retryCount} {retryCount === 1 ? 'retry' : 'retries'}</span>
+                <span>Connected after {retryCount} {retryCount === 1 ? 'retry' : 'retries'}</span>
               </div>
             )}
           </div>
