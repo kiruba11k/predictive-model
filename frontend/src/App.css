@@ -8,47 +8,64 @@ background:black;
 
 color:white;
 
-overflow:hidden;
-
 }
 
 
-
-.container{
+.main{
 
 height:100vh;
 
 display:flex;
 
-justify-content:center;
-
 align-items:center;
+
+justify-content:center;
 
 }
 
 
+/* 3D Canvas */
 
-.bg{
 
-position:absolute;
+.canvas{
 
-top:0;
-
-left:0;
+position:fixed;
 
 height:100%;
 
 width:100%;
 
+z-index:-1;
+
 }
 
 
+/* Sidebar */
 
-.card{
 
-position:relative;
+.sidebar{
+
+position:absolute;
+
+left:0;
+
+height:100%;
+
+width:200px;
+
+background:rgba(255,255,255,0.05);
 
 backdrop-filter: blur(20px);
+
+padding:20px;
+
+}
+
+
+/* Glass Card */
+
+
+.card{
 
 background:rgba(255,255,255,0.05);
 
@@ -56,10 +73,15 @@ padding:40px;
 
 border-radius:20px;
 
-box-shadow:0 0 40px cyan;
+backdrop-filter: blur(20px);
+
+box-shadow:
+
+0 0 20px cyan,
+
+0 0 60px blue;
 
 }
-
 
 
 input{
@@ -77,27 +99,55 @@ border-radius:10px;
 }
 
 
-
 button{
 
 margin-top:20px;
 
 padding:12px;
 
-background:cyan;
-
 border:none;
 
 border-radius:10px;
+
+background:linear-gradient(
+
+90deg,
+
+cyan,
+
+blue
+
+);
+
+color:white;
 
 cursor:pointer;
 
 }
 
 
-
 .result{
 
 margin-top:20px;
+
+}
+
+
+/* Responsive */
+
+
+@media(max-width:768px){
+
+.sidebar{
+
+display:none;
+
+}
+
+.card{
+
+width:90%;
+
+}
 
 }
