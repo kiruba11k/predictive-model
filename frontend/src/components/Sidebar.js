@@ -1,27 +1,43 @@
-import React from "react";
+import React from 'react';
 
-export default function Sidebar({ open }) {
+const Sidebar = ({ open, setOpen }) => {
+  return (
+    <>
+      <div className={`sidebar-overlay ${open ? 'active' : ''}`} onClick={() => setOpen(false)} />
+      <div className={`sidebar ${open ? 'open' : ''}`}>
+        <div className="sidebar-header">
+          <h3>Menu</h3>
+          <button className="close-sidebar" onClick={() => setOpen(false)}>✕</button>
+        </div>
+        <div className="sidebar-links">
+          <a href="#" className="sidebar-link">
+            <i>📊</i>
+            <span>Dashboard</span>
+          </a>
+          <a href="#" className="sidebar-link">
+            <i>🤖</i>
+            <span>AI Predictor</span>
+          </a>
+          <a href="#" className="sidebar-link">
+            <i>📈</i>
+            <span>Analytics</span>
+          </a>
+          <a href="#" className="sidebar-link">
+            <i>⚙️</i>
+            <span>Settings</span>
+          </a>
+          <a href="#" className="sidebar-link">
+            <i>📁</i>
+            <span>Projects</span>
+          </a>
+          <a href="#" className="sidebar-link">
+            <i>👥</i>
+            <span>Team</span>
+          </a>
+        </div>
+      </div>
+    </>
+  );
+};
 
-return (
-
-<aside className={`sidebar ${open ? "open" : ""}`}>
-
-<h2>Dashboard</h2>
-
-<nav>
-
-<a href="#">Predict</a>
-
-<a href="#">Analytics</a>
-
-<a href="#">Reports</a>
-
-<a href="#">Settings</a>
-
-</nav>
-
-</aside>
-
-);
-
-}
+export default Sidebar;
