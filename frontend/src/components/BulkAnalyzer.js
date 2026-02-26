@@ -11,27 +11,22 @@ import {
   FaExclamationTriangle,
   FaTable,
   FaChartPie,
-  FaChartLine,
-  FaFileExport,
-  FaDatabase,
-  FaCheck,
-  FaTimes,
-  FaPercentage,
   FaFileExcel,
   FaUpload,
   FaEye,
   FaMagic,
-  FaFileDownload,
-  FaFileCsv as FaFileCsvIcon
+  FaCheck,
+  FaTimes,
+  FaDatabase,
+  FaPercentage
 } from 'react-icons/fa';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell
 } from 'recharts';
 
 const BulkAnalyzer = () => {
   const [file, setFile] = useState(null);
-  const [uploading, setUploading] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [results, setResults] = useState(null);
   const [originalData, setOriginalData] = useState(null);
@@ -39,10 +34,11 @@ const BulkAnalyzer = () => {
   const [preview, setPreview] = useState([]);
   const [activeTab, setActiveTab] = useState('table');
   const [progress, setProgress] = useState(0);
-  const [downloadFormat, setDownloadFormat] = useState('csv'); // 'csv' or 'excel'
+  const [jobId, setJobId] = useState(null);
   const fileInputRef = useRef(null);
+  const pollIntervalRef = useRef(null);
 
-  const COLORS = ['#00ffff', '#ff00ff', '#00ff88', '#ff8800', '#8884d8'];
+  const COLORS = ['#00ffff', '#ff00ff', '#00ff88', '#ff8800'];
 
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
@@ -52,6 +48,7 @@ const BulkAnalyzer = () => {
           file.name.endsWith('.xlsx')) {
         setFile(file);
         setError(null);
+        setResults(null);
         previewFile(file);
       } else {
         setError('Please upload a CSV or Excel file');
@@ -68,7 +65,6 @@ const BulkAnalyzer = () => {
           const rows = text.split('\n').filter(row => row.trim());
           const headers = rows[0].split(',').map(h => h.trim());
           
-          // Store original data for later use
           const allData = rows.slice(1).map(row => {
             const values = row.split(',').map(v => v.trim());
             return headers.reduce((obj, header, index) => {
@@ -78,18 +74,15 @@ const BulkAnalyzer = () => {
           });
           setOriginalData(allData);
           
-          // Preview first 5 rows
           const previewData = allData.slice(0, 5);
           setPreview({ headers, data: previewData });
         } else {
-          // Handle Excel files
           const data = new Uint8Array(e.target.result);
           const workbook = XLSX.read(data, { type: 'array' });
           const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
           const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
           const headers = jsonData[0].map(h => String(h).trim());
           
-          // Store original data
           const allData = jsonData.slice(1).map(row => {
             return headers.reduce((obj, header, index) => {
               obj[header] = row[index] || '';
@@ -98,7 +91,6 @@ const BulkAnalyzer = () => {
           });
           setOriginalData(allData);
           
-          // Preview first 5 rows
           const previewData = allData.slice(0, 5);
           setPreview({ headers, data: previewData });
         }
@@ -121,68 +113,72 @@ const BulkAnalyzer = () => {
       return;
     }
 
-    setUploading(true);
     setProcessing(true);
     setProgress(0);
     setError(null);
+    setResults(null);
+
+    const formData = new FormData();
+    formData.append('file', file);
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const uploadRes = await axios.post(
-        'https://predictive-model-backend.onrender.com/upload-bulk',
+      // Start the bulk processing job
+      const response = await axios.post(
+        'https://predictive-model-backend.onrender.com/api/bulk/predict',
         formData,
         {
           headers: { 'Content-Type': 'multipart/form-data' },
-          timeout: 300000,
-          onUploadProgress: (progressEvent) => {
-            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-            setProgress(percentCompleted);
-          }
+          timeout: 10000
         }
       );
 
-      if (uploadRes.data && uploadRes.data.jobId) {
-        pollForResults(uploadRes.data.jobId);
+      if (response.data && response.data.jobId) {
+        setJobId(response.data.jobId);
+        // Start polling for results
+        startPolling(response.data.jobId);
       } else {
         throw new Error('Invalid response from server');
       }
     } catch (err) {
       console.error('Upload error:', err);
-      setError(err.response?.data?.detail || err.message || 'Failed to process file');
-      setUploading(false);
+      setError(err.response?.data?.detail || err.message || 'Failed to start processing');
       setProcessing(false);
     }
   };
 
-  const pollForResults = async (jobId) => {
-    const pollInterval = setInterval(async () => {
+  const startPolling = (jobId) => {
+    // Clear any existing interval
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+    }
+
+    // Poll every 2 seconds
+    pollIntervalRef.current = setInterval(async () => {
       try {
-        const res = await axios.get(
-          `https://predictive-model-backend.onrender.com/bulk-status/${jobId}`
+        const response = await axios.get(
+          `https://predictive-model-backend.onrender.com/api/bulk/status/${jobId}`
         );
 
-        if (res.data.status === 'completed') {
-          clearInterval(pollInterval);
-          setResults(res.data.results);
+        const data = response.data;
+        
+        if (data.status === 'completed') {
+          clearInterval(pollIntervalRef.current);
+          setResults(data.results);
           setProcessing(false);
-          setUploading(false);
           setProgress(100);
-        } else if (res.data.status === 'failed') {
-          clearInterval(pollInterval);
-          setError(res.data.error || 'Processing failed');
+        } else if (data.status === 'failed') {
+          clearInterval(pollIntervalRef.current);
+          setError(data.error || 'Processing failed');
           setProcessing(false);
-          setUploading(false);
         } else {
-          setProgress(res.data.progress || 0);
+          // Update progress
+          setProgress(data.progress || 0);
         }
       } catch (err) {
         console.error('Polling error:', err);
-        clearInterval(pollInterval);
+        clearInterval(pollIntervalRef.current);
         setError('Failed to get processing status');
         setProcessing(false);
-        setUploading(false);
       }
     }, 2000);
   };
@@ -190,56 +186,20 @@ const BulkAnalyzer = () => {
   const downloadResults = () => {
     if (!results || !originalData) return;
 
-    // Merge original data with prediction results
+    // Merge original data with predictions
     const mergedData = originalData.map((row, index) => {
-      const prediction = results.data[index] || {};
+      const prediction = results.predictions[index] || {};
       return {
         ...row,
         'Prediction': prediction.prediction || 'N/A',
         'Probability': prediction.probability ? `${(prediction.probability * 100).toFixed(2)}%` : 'N/A',
-        'Success Probability': prediction.success_probability ? `${(prediction.success_probability * 100).toFixed(2)}%` : 'N/A',
-        'Confidence Score': prediction.confidence || 'N/A'
+        'Success Rate': prediction.success_probability ? `${(prediction.success_probability * 100).toFixed(2)}%` : 'N/A',
+        'Confidence': prediction.confidence || 'Medium'
       };
     });
 
-    if (downloadFormat === 'csv') {
-      downloadAsCSV(mergedData);
-    } else {
-      downloadAsExcel(mergedData);
-    }
-  };
-
-  const downloadAsCSV = (data) => {
-    // Get all headers (original + new)
-    const headers = Object.keys(data[0]);
-    
-    // Create CSV content
-    const csvContent = [
-      headers.join(','),
-      ...data.map(row => 
-        headers.map(header => {
-          const value = row[header] || '';
-          // Escape commas and quotes
-          if (typeof value === 'string' && (value.includes(',') || value.includes('"'))) {
-            return `"${value.replace(/"/g, '""')}"`;
-          }
-          return value;
-        }).join(',')
-      )
-    ].join('\n');
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `bulk-prediction-results-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    window.URL.revokeObjectURL(url);
-  };
-
-  const downloadAsExcel = (data) => {
     // Create worksheet
-    const ws = XLSX.utils.json_to_sheet(data);
+    const ws = XLSX.utils.json_to_sheet(mergedData);
     
     // Create workbook
     const wb = XLSX.utils.book_new();
@@ -247,137 +207,61 @@ const BulkAnalyzer = () => {
     
     // Add summary sheet
     const summaryData = [
-      ['Summary Statistics'],
+      ['Bulk Prediction Summary'],
+      ['Generated:', new Date().toLocaleString()],
+      [''],
       ['Total Records', results.summary.total],
-      ['Successful', results.summary.successful],
-      ['Failed', results.summary.failed],
-      ['Success Rate', `${(results.summary.successful / results.summary.total * 100).toFixed(2)}%`],
-      [],
+      ['Successful Predictions', results.summary.successful],
+      ['Failed Predictions', results.summary.failed],
+      ['Success Rate', `${results.summary.successRate.toFixed(2)}%`],
+      [''],
       ['Prediction Distribution'],
-      ['Prediction', 'Count'],
-      ['Success', results.summary.successful],
-      ['Failure', results.summary.failed]
+      ['Prediction', 'Count', 'Percentage'],
+      ['Success', results.summary.successful, `${((results.summary.successful/results.summary.total)*100).toFixed(2)}%`],
+      ['Failure', results.summary.failed, `${((results.summary.failed/results.summary.total)*100).toFixed(2)}%`]
     ];
     
     const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
     XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
     
     // Save file
-    XLSX.writeFile(wb, `bulk-prediction-results-${new Date().toISOString().split('T')[0]}.xlsx`);
+    XLSX.writeFile(wb, `bulk-predictions-${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const renderSummary = () => {
     if (!results) return null;
 
     const { summary } = results;
-    const successRate = (summary.successful / summary.total * 100).toFixed(1);
 
     return (
       <div className="summary-cards">
         <div className="summary-card">
-          <div className="summary-icon">
-            <FaDatabase />
-          </div>
+          <FaDatabase className="summary-icon" />
           <div className="summary-content">
             <h3>Total Records</h3>
             <p className="summary-value">{summary.total}</p>
           </div>
         </div>
         <div className="summary-card">
-          <div className="summary-icon success-icon">
-            <FaCheck />
-          </div>
+          <FaCheck className="summary-icon success-icon" />
           <div className="summary-content">
             <h3>Successful</h3>
             <p className="summary-value success">{summary.successful}</p>
           </div>
         </div>
         <div className="summary-card">
-          <div className="summary-icon failure-icon">
-            <FaTimes />
-          </div>
+          <FaTimes className="summary-icon failure-icon" />
           <div className="summary-content">
             <h3>Failed</h3>
             <p className="summary-value failure">{summary.failed}</p>
           </div>
         </div>
         <div className="summary-card">
-          <div className="summary-icon rate-icon">
-            <FaPercentage />
-          </div>
+          <FaPercentage className="summary-icon rate-icon" />
           <div className="summary-content">
             <h3>Success Rate</h3>
-            <p className="summary-value">{successRate}%</p>
+            <p className="summary-value">{summary.successRate.toFixed(2)}%</p>
           </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderCharts = () => {
-    if (!results) return null;
-
-    const { summary } = results;
-
-    const pieData = [
-      { name: 'Successful', value: summary.successful },
-      { name: 'Failed', value: summary.failed }
-    ];
-
-    const probabilityData = results.data
-      .sort((a, b) => b.probability - a.probability)
-      .slice(0, 10)
-      .map((item, index) => ({
-        name: `Item ${index + 1}`,
-        probability: (item.probability * 100).toFixed(1)
-      }));
-
-    return (
-      <div className="charts-container">
-        <div className="chart-card">
-          <h3>
-            <FaChartPie /> Success Distribution
-          </h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <PieChart>
-              <Pie
-                data={pieData}
-                cx="50%"
-                cy="50%"
-                labelLine={false}
-                label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
-                outerRadius={80}
-                fill="#8884d8"
-                dataKey="value"
-              >
-                {pieData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
-
-        <div className="chart-card">
-          <h3>
-            <FaChartBar /> Top 10 Probabilities
-          </h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={probabilityData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-              <XAxis dataKey="name" stroke="#888" />
-              <YAxis stroke="#888" />
-              <Tooltip />
-              <Bar dataKey="probability" fill="url(#colorGradient)" />
-              <defs>
-                <linearGradient id="colorGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#00ffff" stopOpacity={1}/>
-                  <stop offset="100%" stopColor="#ff00ff" stopOpacity={1}/>
-                </linearGradient>
-              </defs>
-            </BarChart>
-          </ResponsiveContainer>
         </div>
       </div>
     );
@@ -386,13 +270,13 @@ const BulkAnalyzer = () => {
   const renderTable = () => {
     if (!results || !originalData) return null;
 
-    // Merge data for display
-    const displayData = originalData.slice(0, 10).map((row, index) => {
-      const prediction = results.data[index] || {};
+    // Merge first 10 records for preview
+    const previewData = originalData.slice(0, 10).map((row, index) => {
+      const prediction = results.predictions[index] || {};
       return { ...row, ...prediction };
     });
 
-    const allHeaders = [...preview.headers, 'Prediction', 'Probability', 'Success Probability'];
+    const allHeaders = [...preview.headers, 'Prediction', 'Probability', 'Success Rate'];
 
     return (
       <div className="table-container">
@@ -405,7 +289,7 @@ const BulkAnalyzer = () => {
             </tr>
           </thead>
           <tbody>
-            {displayData.map((row, rowIndex) => (
+            {previewData.map((row, rowIndex) => (
               <tr key={rowIndex}>
                 {preview.headers.map((header, colIndex) => (
                   <td key={colIndex}>{row[header]}</td>
@@ -424,9 +308,46 @@ const BulkAnalyzer = () => {
         </table>
         {originalData.length > 10 && (
           <div className="table-note">
-            Showing first 10 of {originalData.length} records. Download full results below.
+            Showing first 10 of {originalData.length} records. Download Excel file for complete results.
           </div>
         )}
+      </div>
+    );
+  };
+
+  const renderCharts = () => {
+    if (!results) return null;
+
+    const { summary } = results;
+
+    const pieData = [
+      { name: 'Successful', value: summary.successful },
+      { name: 'Failed', value: summary.failed }
+    ];
+
+    return (
+      <div className="charts-container">
+        <div className="chart-card">
+          <h3>Success Distribution</h3>
+          <ResponsiveContainer width="100%" height={300}>
+            <PieChart>
+              <Pie
+                data={pieData}
+                cx="50%"
+                cy="50%"
+                labelLine={false}
+                label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                outerRadius={80}
+                dataKey="value"
+              >
+                {pieData.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                ))}
+              </Pie>
+              <Tooltip />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
       </div>
     );
   };
@@ -437,7 +358,7 @@ const BulkAnalyzer = () => {
         <h2>
           <FaMagic /> Bulk Analysis
         </h2>
-        <p>Upload a CSV or Excel file containing pain points for batch prediction</p>
+        <p>Upload a CSV or Excel file for batch prediction</p>
       </div>
 
       <div className="upload-section">
@@ -454,7 +375,7 @@ const BulkAnalyzer = () => {
           />
           <FaCloudUploadAlt className="upload-icon" />
           <h3>
-            <FaUpload /> Click to upload or drag and drop
+            <FaUpload /> Click to upload
           </h3>
           <p>
             <FaFileCsv /> <FaFileExcel /> CSV or Excel files only
@@ -474,7 +395,7 @@ const BulkAnalyzer = () => {
           </div>
         )}
 
-        {preview.headers && (
+        {preview.headers && !results && (
           <div className="preview-section">
             <h3>
               <FaEye /> File Preview
@@ -537,33 +458,15 @@ const BulkAnalyzer = () => {
         <div className="results-section">
           <div className="results-header">
             <h3>
-              <FaCheckCircle /> Analysis Results
+              <FaCheckCircle /> Analysis Complete
             </h3>
-            <div className="download-controls">
-              <select 
-                className="format-select"
-                value={downloadFormat}
-                onChange={(e) => setDownloadFormat(e.target.value)}
-              >
-                <option value="csv">CSV Format</option>
-                <option value="excel">Excel Format</option>
-              </select>
-              <button className="download-button" onClick={downloadResults}>
-                {downloadFormat === 'csv' ? <FaFileCsvIcon /> : <FaFileExcel />}
-                Download Results
-              </button>
-            </div>
+            <button className="download-button" onClick={downloadResults}>
+              <FaFileExcel />
+              Download Excel Results
+            </button>
           </div>
 
           {renderSummary()}
-
-          <div className="results-info">
-            <p>
-              <FaDatabase /> Total Records: {results.summary.total} | 
-              <FaCheck /> Successful: {results.summary.successful} | 
-              <FaTimes /> Failed: {results.summary.failed}
-            </p>
-          </div>
 
           <div className="tabs">
             <button
@@ -576,7 +479,7 @@ const BulkAnalyzer = () => {
               className={`tab ${activeTab === 'charts' ? 'active' : ''}`}
               onClick={() => setActiveTab('charts')}
             >
-              <FaChartPie /> Charts
+              <FaChartBar /> Charts
             </button>
           </div>
 
