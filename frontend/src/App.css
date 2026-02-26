@@ -1049,3 +1049,34 @@ body::before {
     justify-content: center;
   }
 }
+.analyzer-tabs {
+  display: flex;
+  gap: 1rem;
+  margin: 2rem 0;
+  justify-content: center;
+}
+
+.analyzer-tab {
+  padding: 0.8rem 2rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(0, 255, 255, 0.2);
+  border-radius: 30px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+.analyzer-tab:hover {
+  background: rgba(0, 255, 255, 0.1);
+  color: var(--primary);
+  transform: translateY(-2px);
+}
+
+.analyzer-tab.active {
+  background: linear-gradient(135deg, var(--primary), var(--secondary));
+  color: white;
+  border-color: transparent;
+  box-shadow: 0 5px 20px rgba(0, 255, 255, 0.3);
+}
