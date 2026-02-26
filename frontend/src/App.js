@@ -3,12 +3,14 @@ import Navbar from "./components/Navbar";
 import Sidebar from "./components/Sidebar";
 import Predictor from "./components/Predictor";
 import Dashboard from "./components/Dashboard";
+import BulkAnalyzer from "./components/BulkAnalyzer";
 import Particles from "./components/Particles";
 import "./App.css";
 
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const [activeTab, setActiveTab] = useState('single'); // 'single' or 'bulk'
 
   useEffect(() => {
     const handleScroll = () => {
@@ -26,7 +28,23 @@ export default function App() {
       <main className={`main ${sidebarOpen ? "sidebar-active" : ""}`}>
         <div className="content-wrapper">
           <Dashboard />
-          <Predictor />
+          
+          <div className="analyzer-tabs">
+            <button 
+              className={`analyzer-tab ${activeTab === 'single' ? 'active' : ''}`}
+              onClick={() => setActiveTab('single')}
+            >
+              Single Analysis
+            </button>
+            <button 
+              className={`analyzer-tab ${activeTab === 'bulk' ? 'active' : ''}`}
+              onClick={() => setActiveTab('bulk')}
+            >
+              Bulk Analysis
+            </button>
+          </div>
+
+          {activeTab === 'single' ? <Predictor /> : <BulkAnalyzer />}
         </div>
       </main>
     </div>
