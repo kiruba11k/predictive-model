@@ -1,15 +1,22 @@
 {
-"dependencies": {
+  "name": "ai-lead-ui",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
 
-"react": "^18",
+    "react": "^18.2.0",
 
-"three": "^0.160",
+    "react-dom": "^18.2.0",
 
-"framer-motion": "^10",
+    "three": "^0.160.0",
 
-"@react-three/fiber": "^8",
+    "@react-three/fiber": "^8.15.16",
 
-"@react-three/drei": "^9"
+    "@react-three/drei": "^9.88.7",
 
-}
+    "framer-motion": "^11.0.0",
+
+    "axios": "^1.6.0"
+
+  }
 }
