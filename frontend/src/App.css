@@ -793,3 +793,259 @@ body::before {
 ::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(135deg, var(--secondary), var(--primary));
 }
+/* Add to your existing App.css */
+
+.predictor-description .note {
+  font-size: 0.85rem;
+  color: var(--warning);
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  background: rgba(255, 170, 0, 0.1);
+  border-radius: 8px;
+  border-left: 3px solid var(--warning);
+}
+
+.button-group {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+.cancel-button {
+  padding: 1rem 1.5rem;
+  background: rgba(255, 68, 68, 0.2);
+  border: 1px solid var(--danger);
+  border-radius: 12px;
+  color: var(--danger);
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.cancel-button:hover {
+  background: rgba(255, 68, 68, 0.3);
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(255, 68, 68, 0.3);
+}
+
+.loading-indicator {
+  margin-top: 2rem;
+  text-align: center;
+}
+
+.loading-progress {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 1rem;
+}
+
+.loading-bar {
+  height: 100%;
+  width: 30%;
+  background: linear-gradient(90deg, var(--primary), var(--secondary));
+  border-radius: 2px;
+  animation: loadingProgress 2s ease-in-out infinite;
+}
+
+@keyframes loadingProgress {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
+.loading-text {
+  color: var(--primary);
+  font-weight: 500;
+  margin-bottom: 0.5rem;
+}
+
+.loading-subtext {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+/* Error Container Styles */
+.error-container {
+  margin-top: 2rem;
+  padding: 1.5rem;
+  background: rgba(255, 68, 68, 0.1);
+  border-radius: 16px;
+  border-left: 4px solid var(--danger);
+  animation: slideIn 0.5s ease;
+}
+
+.error-container.timeout {
+  border-left-color: var(--warning);
+  background: rgba(255, 170, 0, 0.1);
+}
+
+.error-container.network {
+  border-left-color: #ff8800;
+  background: rgba(255, 136, 0, 0.1);
+}
+
+.error-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.error-icon {
+  font-size: 1.5rem;
+  color: var(--danger);
+}
+
+.error-container.timeout .error-icon {
+  color: var(--warning);
+}
+
+.error-container.network .error-icon {
+  color: #ff8800;
+}
+
+.error-title {
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.error-container.timeout .error-title {
+  color: var(--warning);
+}
+
+.error-container.network .error-title {
+  color: #ff8800;
+}
+
+.error-message {
+  color: var(--text-primary);
+  margin-bottom: 1rem;
+  padding: 0.5rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+}
+
+.error-suggestions {
+  margin: 1rem 0;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+}
+
+.suggestion-title {
+  color: var(--text-secondary);
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+}
+
+.suggestion-list {
+  list-style: none;
+  padding: 0;
+}
+
+.suggestion-list li {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  margin-bottom: 0.3rem;
+  padding-left: 0.5rem;
+}
+
+.error-actions {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.retry-button {
+  padding: 0.8rem 1.5rem;
+  background: linear-gradient(135deg, var(--primary), var(--secondary));
+  border: none;
+  border-radius: 8px;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.retry-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px var(--primary-glow);
+}
+
+.retry-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.error-details {
+  margin-top: 1rem;
+  padding: 0.5rem;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 8px;
+}
+
+.error-details summary {
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.error-details pre {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 4px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  overflow-x: auto;
+}
+
+/* Retry Info */
+.retry-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding: 0.5rem;
+  background: rgba(0, 255, 255, 0.1);
+  border-radius: 8px;
+  color: var(--primary);
+  font-size: 0.9rem;
+}
+
+.confidence-value {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .button-group {
+    flex-direction: column;
+  }
+  
+  .cancel-button {
+    width: 100%;
+    justify-content: center;
+  }
+  
+  .error-actions {
+    flex-direction: column;
+  }
+  
+  .retry-button,
+  .cancel-button {
+    width: 100%;
+    justify-content: center;
+  }
+}
