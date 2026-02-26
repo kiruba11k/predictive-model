@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from database import SessionLocal, Lead
 from model import Predictor
 
+
 app = FastAPI()
 
 predictor = Predictor()
@@ -13,7 +14,9 @@ def predict(pain_point:str):
 
     pred, prob = predictor.predict(pain_point)
 
+
     db = SessionLocal()
+
 
     lead = Lead(
 
@@ -25,15 +28,17 @@ def predict(pain_point:str):
 
     )
 
+
     db.add(lead)
 
     db.commit()
 
+
     return {
 
-        "prediction": lead.prediction,
+        "prediction":lead.prediction,
 
-        "probability": lead.probability
+        "probability":lead.probability
 
     }
 
@@ -42,16 +47,34 @@ def predict(pain_point:str):
 
 def learn(pain_point:str, actual:str):
 
-    predictor.learn(pain_point, actual)
+
+    predictor.learn(
+
+        pain_point,
+
+        actual
+
+    )
+
 
     db = SessionLocal()
 
+
     lead = db.query(Lead).filter(
-        Lead.pain_point == pain_point
+
+        Lead.pain_point==pain_point
+
     ).first()
+
 
     lead.actual = actual
 
+
     db.commit()
 
-    return {"status":"learned"}
+
+    return {
+
+        "status":"learned"
+
+    }
