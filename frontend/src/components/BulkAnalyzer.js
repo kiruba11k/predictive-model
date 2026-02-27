@@ -24,9 +24,7 @@ import {
   FaInfoCircle,
   FaBan,
   FaExclamationCircle,
-  FaForward,
-  FaStepForward,
-  FaFastForward
+  FaPlay
 } from 'react-icons/fa';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -43,14 +41,14 @@ const BulkAnalyzer = () => {
   const [preview, setPreview] = useState([]);
   const [activeTab, setActiveTab] = useState('table');
   const [progress, setProgress] = useState(0);
-  const [jobId, setJobId] = useState(null);
   const [estimatedTime, setEstimatedTime] = useState(null);
   const [startTime, setStartTime] = useState(null);
   const [serverStatus, setServerStatus] = useState('checking');
   const [jobInfo, setJobInfo] = useState(null);
+  const [currentRow, setCurrentRow] = useState(0);
+  const [totalRows, setTotalRows] = useState(0);
   const fileInputRef = useRef(null);
-  const pollIntervalRef = useRef(null);
-  const timeoutRef = useRef(null);
+  const abortControllerRef = useRef(null);
 
   const BASE_URL = 'https://predictive-model-backend.onrender.com';
   const COLORS = ['#00ffff', '#ff00ff', '#00ff88', '#ff8800', '#8884d8'];
@@ -58,9 +56,6 @@ const BulkAnalyzer = () => {
   // Check server health on component mount
   React.useEffect(() => {
     checkServerHealth();
-    return () => {
-      stopPolling();
-    };
   }, []);
 
   const checkServerHealth = async () => {
@@ -75,7 +70,6 @@ const BulkAnalyzer = () => {
     } catch (err) {
       console.error('Server health check failed:', err);
       setServerStatus('offline');
-      setError('Cannot connect to server. The server might be starting up (takes 30-60 seconds on Render free tier).');
     }
   };
 
@@ -88,7 +82,6 @@ const BulkAnalyzer = () => {
         setFile(file);
         setError(null);
         setResults(null);
-        setJobInfo(null);
         previewFile(file);
       } else {
         setError('Please upload a CSV or Excel file');
@@ -114,6 +107,7 @@ const BulkAnalyzer = () => {
             }, {});
           });
           setOriginalData(allData);
+          setTotalRows(allData.length);
           
           const previewData = allData.slice(0, 5);
           setPreview({ headers, data: previewData });
@@ -132,6 +126,7 @@ const BulkAnalyzer = () => {
             }, {});
           });
           setOriginalData(allData);
+          setTotalRows(allData.length);
           
           const previewData = allData.slice(0, 5);
           setPreview({ headers, data: previewData });
@@ -156,9 +151,12 @@ const BulkAnalyzer = () => {
     }
 
     if (serverStatus === 'offline') {
-      setError('Server is offline. Please wait for it to start up (takes 30-60 seconds).');
+      setError('Server is offline. Please wait for it to start up.');
       return;
     }
+
+    // Create abort controller for cancellation
+    abortControllerRef.current = new AbortController();
 
     setProcessing(true);
     setProgress(0);
@@ -166,177 +164,190 @@ const BulkAnalyzer = () => {
     setResults(null);
     setStartTime(Date.now());
     setEstimatedTime(null);
+    setCurrentRow(0);
 
-    const formData = new FormData();
-    formData.append('file', file);
+    const results_array = [];
+    let successful = 0;
+    let failed = 0;
+    let skipped = 0;
+
+    setJobInfo({
+      total: totalRows,
+      current: 0,
+      message: `Processing ${totalRows} records...`
+    });
 
     try {
-      const response = await axios.post(
-        `${BASE_URL}/upload-bulk`,
-        formData,
-        {
-          headers: { 'Content-Type': 'multipart/form-data' },
-          timeout: 30000
-        }
-      );
-
-      console.log('Upload response:', response.data);
-
-      if (response.data && response.data.jobId) {
-        setJobId(response.data.jobId);
-        setJobInfo({
-          total: response.data.total,
-          valid: response.data.valid,
-          skipped: response.data.skipped,
-          message: response.data.message
-        });
-        startPolling(response.data.jobId);
+      // Process each row sequentially
+      for (let i = 0; i < originalData.length; i++) {
+        const row = originalData[i];
+        const pain_point = row.pain_point || row['pain_point'] || '';
         
-        timeoutRef.current = setTimeout(() => {
-          stopPolling();
-          setError('Processing is taking longer than expected. The job is still running but you can check back later.');
-          setProcessing(false);
-        }, 600000); // 10 minutes
-      } else {
-        throw new Error('Invalid response from server');
+        // Update current row
+        setCurrentRow(i + 1);
+        
+        // Skip empty pain points
+        if (!pain_point || !pain_point.toString().trim()) {
+          results_array.push({
+            ...row,
+            prediction: 'Skipped',
+            probability: 0,
+            success_probability: 0,
+            confidence: 'N/A',
+            note: 'Empty pain point - skipped'
+          });
+          skipped++;
+          
+          // Update progress
+          const progressPercent = Math.round(((i + 1) / totalRows) * 100);
+          setProgress(progressPercent);
+          setJobInfo(prev => ({
+            ...prev,
+            current: i + 1,
+            progress: progressPercent
+          }));
+          continue;
+        }
+
+        try {
+          // Call the /predict endpoint for each row
+          const response = await axios.post(
+            `${BASE_URL}/predict?pain_point=${encodeURIComponent(pain_point.toString().trim())}`,
+            null,
+            {
+              signal: abortControllerRef.current.signal,
+              timeout: 10000 // 10 second timeout per request
+            }
+          );
+
+          if (response.data) {
+            const prediction = response.data.prediction;
+            const probability = response.data.probability;
+            
+            if (prediction === 'Success') {
+              successful++;
+            } else {
+              failed++;
+            }
+
+            results_array.push({
+              ...row,
+              prediction: prediction,
+              probability: probability,
+              success_probability: prediction === 'Success' ? probability : 1 - probability,
+              confidence: probability > 0.8 ? 'High' : probability > 0.5 ? 'Medium' : 'Low'
+            });
+          }
+        } catch (err) {
+          console.error(`Error processing row ${i + 1}:`, err);
+          
+          if (axios.isCancel(err)) {
+            // Request was cancelled
+            setProcessing(false);
+            return;
+          }
+
+          results_array.push({
+            ...row,
+            prediction: 'Error',
+            probability: 0,
+            success_probability: 0,
+            confidence: 'N/A',
+            error: err.message || 'Request failed'
+          });
+          failed++;
+        }
+
+        // Update progress
+        const progressPercent = Math.round(((i + 1) / totalRows) * 100);
+        setProgress(progressPercent);
+        setJobInfo(prev => ({
+          ...prev,
+          current: i + 1,
+          progress: progressPercent
+        }));
+
+        // Calculate estimated time remaining
+        if (i > 0 && startTime) {
+          const elapsedSeconds = (Date.now() - startTime) / 1000;
+          const avgTimePerRow = elapsedSeconds / (i + 1);
+          const remainingRows = totalRows - (i + 1);
+          const remainingSeconds = avgTimePerRow * remainingRows;
+          
+          if (remainingSeconds > 0 && remainingSeconds < 3600) {
+            const minutes = Math.floor(remainingSeconds / 60);
+            const seconds = Math.floor(remainingSeconds % 60);
+            setEstimatedTime(`${minutes}m ${seconds}s`);
+          }
+        }
+
+        // Small delay to prevent overwhelming the server
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
+
+      // All rows processed
+      const summary = {
+        total: totalRows,
+        successful: successful,
+        failed: failed,
+        skipped: skipped,
+        successRate: successful > 0 ? (successful / (successful + failed) * 100) : 0
+      };
+
+      setResults({
+        predictions: results_array,
+        summary: summary
+      });
+      
+      setProcessing(false);
+      setProgress(100);
+
     } catch (err) {
-      console.error('Upload error:', err);
-      
-      if (err.code === 'ECONNABORTED') {
-        setError('Request timeout. The server might be busy. Please try again.');
-      } else if (err.response?.status === 404) {
-        setError('Upload endpoint not found. Please check if the server has the bulk upload feature.');
-      } else if (err.response?.status === 500) {
-        setError('Server error. Please try again with a smaller file.');
-      } else if (err.message.includes('Network Error')) {
-        setError('Cannot connect to server. The Render free tier server might be sleeping. Please wait 30-60 seconds and try again.');
-      } else {
-        setError(err.response?.data?.detail || err.message || 'Failed to start processing');
-      }
-      
+      console.error('Bulk processing error:', err);
+      setError(err.message || 'Failed to process bulk data');
       setProcessing(false);
     }
   };
 
-  const stopPolling = () => {
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
-    }
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
+  const cancelProcessing = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      setProcessing(false);
+      setError('Processing cancelled by user');
     }
   };
 
-  const startPolling = (jobId) => {
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-    }
-
-    pollIntervalRef.current = setInterval(async () => {
-      try {
-        const response = await axios.get(
-          `${BASE_URL}/bulk-status/${jobId}`,
-          { timeout: 10000 }
-        );
-
-        console.log('Status response:', response.data);
-        const data = response.data;
-        
-        if (data.status === 'completed') {
-          stopPolling();
-          setResults(data.results);
-          setProcessing(false);
-          setProgress(100);
-        } else if (data.status === 'failed') {
-          stopPolling();
-          setError(data.error || 'Processing failed');
-          setProcessing(false);
-        } else {
-          setProgress(data.progress || 0);
-          
-          if (startTime && data.progress > 0) {
-            const elapsedSeconds = (Date.now() - startTime) / 1000;
-            const totalEstimatedSeconds = (elapsedSeconds / data.progress) * 100;
-            const remainingSeconds = totalEstimatedSeconds - elapsedSeconds;
-            
-            if (remainingSeconds > 0 && remainingSeconds < 3600) {
-              const minutes = Math.floor(remainingSeconds / 60);
-              const seconds = Math.floor(remainingSeconds % 60);
-              setEstimatedTime(`${minutes}m ${seconds}s`);
-            }
-          }
-        }
-      } catch (err) {
-        console.error('Polling error:', err);
-        // Don't stop polling on error
-        if (err.response?.status === 404) {
-          console.log('Status endpoint not found yet, continuing to poll...');
-        }
-      }
-    }, 3000);
-  };
-
-  const downloadResults = async () => {
-    if (!jobId) return;
+  const downloadResults = () => {
+    if (!results || !originalData) return;
 
     try {
-      const response = await axios.get(
-        `${BASE_URL}/bulk-results/${jobId}`,
-        { responseType: 'blob', timeout: 30000 }
-      );
-
-      // Create download link
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `bulk-results-${jobId}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-
+      // Create worksheet with all data
+      const ws = XLSX.utils.json_to_sheet(results.predictions);
+      
+      // Create workbook
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Predictions');
+      
+      // Add summary sheet
+      const summaryData = [
+        ['Bulk Prediction Summary'],
+        ['Generated:', new Date().toLocaleString()],
+        [''],
+        ['Total Records', results.summary.total],
+        ['Successful Predictions', results.summary.successful],
+        ['Failed Predictions', results.summary.failed],
+        ['Skipped Rows', results.summary.skipped],
+        ['Success Rate', `${results.summary.successRate.toFixed(2)}%`]
+      ];
+      
+      const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+      XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+      
+      // Save file
+      XLSX.writeFile(wb, `bulk-predictions-${new Date().toISOString().split('T')[0]}.xlsx`);
     } catch (err) {
       console.error('Download error:', err);
-      
-      // Fallback: Generate Excel with merged data
-      if (results && originalData && originalHeaders) {
-        const mergedData = originalData.map((row, index) => {
-          const prediction = results.predictions?.[index] || {};
-          return {
-            ...row,
-            'Prediction': prediction.prediction || 'N/A',
-            'Probability': prediction.probability ? `${(prediction.probability * 100).toFixed(2)}%` : 'N/A',
-            'Success Probability': prediction.success_probability ? `${(prediction.success_probability * 100).toFixed(2)}%` : 'N/A',
-            'Confidence': prediction.confidence || 'N/A',
-            'Note': prediction.note || prediction.error || ''
-          };
-        });
-
-        const ws = XLSX.utils.json_to_sheet(mergedData);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, 'Predictions');
-        
-        const summaryData = [
-          ['Bulk Prediction Summary'],
-          ['Generated:', new Date().toLocaleString()],
-          [''],
-          ['Total Records', results.summary?.total || 0],
-          ['Successful Predictions', results.summary?.successful || 0],
-          ['Failed Predictions', results.summary?.failed || 0],
-          ['Skipped Rows', results.summary?.skipped || 0],
-          ['Success Rate', `${(results.summary?.successRate || 0).toFixed(2)}%`]
-        ];
-        
-        const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
-        XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
-        
-        XLSX.writeFile(wb, `bulk-predictions-${new Date().toISOString().split('T')[0]}.xlsx`);
-      } else {
-        setError('Failed to download results');
-      }
+      setError('Failed to download results');
     }
   };
 
@@ -352,39 +363,17 @@ const BulkAnalyzer = () => {
       return (
         <div className="server-status offline">
           <FaExclamationCircle />
-          <span>Server is starting up. Please wait 30-60 seconds...</span>
+          <span>Server is offline. Please try again later.</span>
         </div>
       );
     }
     return null;
   };
 
-  const renderJobInfo = () => {
-    if (!jobInfo) return null;
-
-    return (
-      <div className="job-info">
-        <FaInfoCircle className="job-info-icon" />
-        <div className="job-info-content">
-          <p><strong>Total rows:</strong> {jobInfo.total}</p>
-          <p><strong>Valid pain points:</strong> {jobInfo.valid}</p>
-          <p><strong>Empty rows (will be skipped):</strong> {jobInfo.skipped}</p>
-          <p className="job-message">{jobInfo.message}</p>
-        </div>
-      </div>
-    );
-  };
-
   const renderSummary = () => {
     if (!results) return null;
 
-    const summary = results.summary || {
-      total: 0,
-      successful: 0,
-      failed: 0,
-      skipped: 0,
-      successRate: 0
-    };
+    const summary = results.summary;
 
     return (
       <div className="summary-cards">
@@ -420,7 +409,7 @@ const BulkAnalyzer = () => {
           <FaPercentage className="summary-icon rate-icon" />
           <div className="summary-content">
             <h3>Success Rate</h3>
-            <p className="summary-value">{summary.successRate?.toFixed(2) || '0'}%</p>
+            <p className="summary-value">{summary.successRate.toFixed(2)}%</p>
           </div>
         </div>
       </div>
@@ -430,13 +419,7 @@ const BulkAnalyzer = () => {
   const renderTable = () => {
     if (!results || !originalData) return null;
 
-    const predictions = results.predictions || [];
-    
-    const previewData = originalData.slice(0, 10).map((row, index) => {
-      const prediction = predictions[index] || {};
-      return { ...row, ...prediction };
-    });
-
+    const previewData = results.predictions.slice(0, 10);
     const allHeaders = [...originalHeaders, 'Prediction', 'Probability', 'Success Probability', 'Confidence', 'Note'];
 
     return (
@@ -476,9 +459,9 @@ const BulkAnalyzer = () => {
             ))}
           </tbody>
         </table>
-        {originalData.length > 10 && (
+        {totalRows > 10 && (
           <div className="table-note">
-            Showing first 10 of {originalData.length} records. Download CSV for complete results.
+            Showing first 10 of {totalRows} records. Download Excel for complete results.
           </div>
         )}
       </div>
@@ -488,12 +471,7 @@ const BulkAnalyzer = () => {
   const renderCharts = () => {
     if (!results) return null;
 
-    const summary = results.summary || {
-      successful: 0,
-      failed: 0,
-      skipped: 0,
-      total: 0
-    };
+    const summary = results.summary;
 
     const pieData = [
       { name: 'Successful', value: summary.successful },
@@ -534,22 +512,21 @@ const BulkAnalyzer = () => {
         <h2>
           <FaMagic /> Bulk Analysis
         </h2>
-        <p>Upload a CSV or Excel file containing 'pain_point' column for batch prediction</p>
+        <p>Upload a CSV or Excel file - each row will be processed using the /predict endpoint</p>
       </div>
 
       {renderServerStatus()}
 
       <div className="upload-section">
         <div 
-          className={`upload-area ${file ? 'file-selected' : ''} ${serverStatus === 'offline' ? 'disabled' : ''}`}
-          onClick={() => serverStatus === 'online' && fileInputRef.current.click()}
+          className={`upload-area ${file ? 'file-selected' : ''}`}
+          onClick={() => fileInputRef.current.click()}
         >
           <input
             type="file"
             ref={fileInputRef}
             onChange={handleFileUpload}
             accept=".csv,.xlsx"
-            disabled={serverStatus === 'offline'}
             style={{ display: 'none' }}
           />
           <FaCloudUploadAlt className="upload-icon" />
@@ -562,7 +539,7 @@ const BulkAnalyzer = () => {
           {file && (
             <div className="file-info">
               {file.name.endsWith('.csv') ? <FaFileCsv /> : <FaFileExcel />}
-              <span>{file.name}</span>
+              <span>{file.name} ({totalRows} rows)</span>
             </div>
           )}
         </div>
@@ -573,8 +550,6 @@ const BulkAnalyzer = () => {
             <span>{error}</span>
           </div>
         )}
-
-        {jobInfo && !results && renderJobInfo()}
 
         {preview.headers && !results && !processing && (
           <div className="preview-section">
@@ -613,15 +588,25 @@ const BulkAnalyzer = () => {
             {processing ? (
               <>
                 <FaSpinner className="spinner" />
-                <span>Processing... {progress}%</span>
+                <span>Processing {currentRow}/{totalRows}... {progress}%</span>
               </>
             ) : (
               <>
-                <FaChartBar />
-                <span>Analyze Bulk Data</span>
+                <FaPlay />
+                <span>Start Bulk Analysis</span>
               </>
             )}
           </button>
+          
+          {processing && (
+            <button
+              className="cancel-button"
+              onClick={cancelProcessing}
+            >
+              <FaTimes />
+              Cancel
+            </button>
+          )}
         </div>
       </div>
 
@@ -641,17 +626,10 @@ const BulkAnalyzer = () => {
               {estimatedTime ? (
                 <>Estimated time remaining: {estimatedTime}</>
               ) : (
-                <>Processing {jobInfo?.total || 0} records... This may take a few minutes</>
+                <>Processing row {currentRow} of {totalRows}...</>
               )}
             </span>
           </div>
-
-          {progress > 0 && progress < 100 && (
-            <div className="progress-note">
-              <FaClock />
-              <span>Don't close this window. You'll be able to download results when complete.</span>
-            </div>
-          )}
         </div>
       )}
 
@@ -662,8 +640,8 @@ const BulkAnalyzer = () => {
               <FaCheckCircle /> Analysis Complete!
             </h3>
             <button className="download-button" onClick={downloadResults}>
-              <FaDownload />
-              Download CSV Results
+              <FaFileExcel />
+              Download Excel Results
             </button>
           </div>
 
