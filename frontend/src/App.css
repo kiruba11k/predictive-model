@@ -1978,3 +1978,77 @@ body::before {
     justify-content: center;
   }
 }
+/* Add to App.css */
+
+.progress-section {
+  margin-top: 2rem;
+  padding: 1.5rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 12px;
+}
+
+.progress-bar-container {
+  height: 20px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  overflow: hidden;
+  position: relative;
+  margin-bottom: 1rem;
+}
+
+.progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary), var(--secondary));
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: white;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
+}
+
+.progress-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem;
+  background: rgba(0, 255, 255, 0.05);
+  border-radius: 8px;
+  color: var(--primary);
+  margin-bottom: 1rem;
+}
+
+.progress-info-icon {
+  animation: pulse 1.5s infinite;
+}
+
+.progress-note {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.8rem;
+  background: rgba(255, 170, 0, 0.1);
+  border-radius: 8px;
+  color: var(--warning);
+  font-size: 0.9rem;
+}
+
+.progress-note svg {
+  animation: spin 2s linear infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
