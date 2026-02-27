@@ -21,8 +21,8 @@ import {
   FaPercentage,
   FaClock,
   FaHourglassHalf,
-  FaServer,
-  FaPlug
+  FaInfoCircle,
+  FaSkipForward
 } from 'react-icons/fa';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -43,21 +43,25 @@ const BulkAnalyzer = () => {
   const [estimatedTime, setEstimatedTime] = useState(null);
   const [startTime, setStartTime] = useState(null);
   const [serverStatus, setServerStatus] = useState('checking');
+  const [jobInfo, setJobInfo] = useState(null);
   const fileInputRef = useRef(null);
   const pollIntervalRef = useRef(null);
   const timeoutRef = useRef(null);
 
   const BASE_URL = 'https://predictive-model-backend.onrender.com';
-  const COLORS = ['#00ffff', '#ff00ff', '#00ff88', '#ff8800'];
+  const COLORS = ['#00ffff', '#ff00ff', '#00ff88', '#ff8800', '#8884d8'];
 
   // Check server health on component mount
   React.useEffect(() => {
     checkServerHealth();
+    return () => {
+      stopPolling();
+    };
   }, []);
 
   const checkServerHealth = async () => {
     try {
-      const response = await axios.get(`${BASE_URL}/`, { timeout: 5000 });
+      const response = await axios.get(`${BASE_URL}/health`, { timeout: 5000 });
       if (response.status === 200) {
         setServerStatus('online');
         setError(null);
@@ -80,6 +84,7 @@ const BulkAnalyzer = () => {
         setFile(file);
         setError(null);
         setResults(null);
+        setJobInfo(null);
         previewFile(file);
       } else {
         setError('Please upload a CSV or Excel file');
@@ -162,7 +167,6 @@ const BulkAnalyzer = () => {
     formData.append('file', file);
 
     try {
-      // Using the bulk upload endpoint from your main.py
       const response = await axios.post(
         `${BASE_URL}/upload-bulk`,
         formData,
@@ -176,6 +180,12 @@ const BulkAnalyzer = () => {
 
       if (response.data && response.data.jobId) {
         setJobId(response.data.jobId);
+        setJobInfo({
+          total: response.data.total,
+          valid: response.data.valid,
+          skipped: response.data.skipped,
+          message: response.data.message
+        });
         startPolling(response.data.jobId);
         
         timeoutRef.current = setTimeout(() => {
@@ -223,7 +233,6 @@ const BulkAnalyzer = () => {
 
     pollIntervalRef.current = setInterval(async () => {
       try {
-        // Using the bulk status endpoint from your main.py
         const response = await axios.get(
           `${BASE_URL}/bulk-status/${jobId}`,
           { timeout: 10000 }
@@ -270,7 +279,6 @@ const BulkAnalyzer = () => {
     if (!jobId) return;
 
     try {
-      // Using the bulk results endpoint from your main.py
       const response = await axios.get(
         `${BASE_URL}/bulk-results/${jobId}`,
         { responseType: 'blob', timeout: 30000 }
@@ -292,12 +300,14 @@ const BulkAnalyzer = () => {
       // Fallback: Generate Excel with merged data
       if (results && originalData && originalHeaders) {
         const mergedData = originalData.map((row, index) => {
-          const prediction = results.results?.[index] || {};
+          const prediction = results.predictions?.[index] || {};
           return {
             ...row,
             'Prediction': prediction.prediction || 'N/A',
             'Probability': prediction.probability ? `${(prediction.probability * 100).toFixed(2)}%` : 'N/A',
-            'Success Probability': prediction.success_probability ? `${(prediction.success_probability * 100).toFixed(2)}%` : 'N/A'
+            'Success Probability': prediction.success_probability ? `${(prediction.success_probability * 100).toFixed(2)}%` : 'N/A',
+            'Confidence': prediction.confidence || 'N/A',
+            'Note': prediction.note || ''
           };
         });
 
@@ -312,7 +322,8 @@ const BulkAnalyzer = () => {
           ['Total Records', results.summary?.total || 0],
           ['Successful Predictions', results.summary?.successful || 0],
           ['Failed Predictions', results.summary?.failed || 0],
-          ['Success Rate', `${((results.summary?.successful / results.summary?.total) * 100 || 0).toFixed(2)}%`]
+          ['Skipped Rows', results.summary?.skipped || 0],
+          ['Success Rate', `${(results.summary?.successRate || 0).toFixed(2)}%`]
         ];
         
         const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
@@ -344,6 +355,22 @@ const BulkAnalyzer = () => {
     return null;
   };
 
+  const renderJobInfo = () => {
+    if (!jobInfo) return null;
+
+    return (
+      <div className="job-info">
+        <FaInfoCircle className="job-info-icon" />
+        <div className="job-info-content">
+          <p><strong>Total rows:</strong> {jobInfo.total}</p>
+          <p><strong>Valid pain points:</strong> {jobInfo.valid}</p>
+          <p><strong>Empty rows (will be skipped):</strong> {jobInfo.skipped}</p>
+          <p className="job-message">{jobInfo.message}</p>
+        </div>
+      </div>
+    );
+  };
+
   const renderSummary = () => {
     if (!results) return null;
 
@@ -351,6 +378,7 @@ const BulkAnalyzer = () => {
       total: 0,
       successful: 0,
       failed: 0,
+      skipped: 0,
       successRate: 0
     };
 
@@ -378,6 +406,13 @@ const BulkAnalyzer = () => {
           </div>
         </div>
         <div className="summary-card">
+          <FaSkipForward className="summary-icon skip-icon" />
+          <div className="summary-content">
+            <h3>Skipped</h3>
+            <p className="summary-value skipped">{summary.skipped}</p>
+          </div>
+        </div>
+        <div className="summary-card">
           <FaPercentage className="summary-icon rate-icon" />
           <div className="summary-content">
             <h3>Success Rate</h3>
@@ -391,14 +426,14 @@ const BulkAnalyzer = () => {
   const renderTable = () => {
     if (!results || !originalData) return null;
 
-    const predictions = results.results || results.predictions || [];
+    const predictions = results.predictions || [];
     
     const previewData = originalData.slice(0, 10).map((row, index) => {
       const prediction = predictions[index] || {};
       return { ...row, ...prediction };
     });
 
-    const allHeaders = [...originalHeaders, 'Prediction', 'Probability', 'Success Probability'];
+    const allHeaders = [...originalHeaders, 'Prediction', 'Probability', 'Success Probability', 'Confidence', 'Note'];
 
     return (
       <div className="table-container">
@@ -418,19 +453,27 @@ const BulkAnalyzer = () => {
                 ))}
                 <td>
                   <span className={`prediction-badge ${row.prediction?.toLowerCase()}`}>
-                    {row.prediction === 'Success' ? <FaCheck /> : <FaTimes />}
+                    {row.prediction === 'Success' && <FaCheck />}
+                    {row.prediction === 'Failure' && <FaTimes />}
+                    {row.prediction === 'Skipped' && <FaSkipForward />}
                     {row.prediction}
                   </span>
                 </td>
                 <td>{row.probability ? `${(row.probability * 100).toFixed(2)}%` : 'N/A'}</td>
                 <td>{row.success_probability ? `${(row.success_probability * 100).toFixed(2)}%` : 'N/A'}</td>
+                <td>
+                  <span className={`confidence-badge ${row.confidence?.toLowerCase()}`}>
+                    {row.confidence}
+                  </span>
+                </td>
+                <td>{row.note || ''}</td>
               </tr>
             ))}
           </tbody>
         </table>
         {originalData.length > 10 && (
           <div className="table-note">
-            Showing first 10 of {originalData.length} records. Download results for complete data.
+            Showing first 10 of {originalData.length} records. Download CSV for complete results.
           </div>
         )}
       </div>
@@ -443,18 +486,20 @@ const BulkAnalyzer = () => {
     const summary = results.summary || {
       successful: 0,
       failed: 0,
+      skipped: 0,
       total: 0
     };
 
     const pieData = [
       { name: 'Successful', value: summary.successful },
-      { name: 'Failed', value: summary.failed }
+      { name: 'Failed', value: summary.failed },
+      { name: 'Skipped', value: summary.skipped }
     ].filter(item => item.value > 0);
 
     return (
       <div className="charts-container">
         <div className="chart-card">
-          <h3>Success Distribution</h3>
+          <h3>Distribution Results</h3>
           <ResponsiveContainer width="100%" height={300}>
             <PieChart>
               <Pie
@@ -524,7 +569,9 @@ const BulkAnalyzer = () => {
           </div>
         )}
 
-        {preview.headers && !results && (
+        {jobInfo && !results && renderJobInfo()}
+
+        {preview.headers && !results && !processing && (
           <div className="preview-section">
             <h3>
               <FaEye /> File Preview
@@ -589,7 +636,7 @@ const BulkAnalyzer = () => {
               {estimatedTime ? (
                 <>Estimated time remaining: {estimatedTime}</>
               ) : (
-                <>Processing {originalData?.length || 0} records... This may take a few minutes</>
+                <>Processing {jobInfo?.total || 0} records... This may take a few minutes</>
               )}
             </span>
           </div>
@@ -611,7 +658,7 @@ const BulkAnalyzer = () => {
             </h3>
             <button className="download-button" onClick={downloadResults}>
               <FaDownload />
-              Download Results
+              Download CSV Results
             </button>
           </div>
 
