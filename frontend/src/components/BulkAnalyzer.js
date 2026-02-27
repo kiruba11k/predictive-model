@@ -30,6 +30,7 @@ const BulkAnalyzer = () => {
   const [processing, setProcessing] = useState(false);
   const [results, setResults] = useState(null);
   const [originalData, setOriginalData] = useState(null);
+  const [originalHeaders, setOriginalHeaders] = useState([]);
   const [error, setError] = useState(null);
   const [preview, setPreview] = useState([]);
   const [activeTab, setActiveTab] = useState('table');
@@ -64,6 +65,7 @@ const BulkAnalyzer = () => {
           const text = e.target.result;
           const rows = text.split('\n').filter(row => row.trim());
           const headers = rows[0].split(',').map(h => h.trim());
+          setOriginalHeaders(headers);
           
           const allData = rows.slice(1).map(row => {
             const values = row.split(',').map(v => v.trim());
@@ -82,6 +84,7 @@ const BulkAnalyzer = () => {
           const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
           const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
           const headers = jsonData[0].map(h => String(h).trim());
+          setOriginalHeaders(headers);
           
           const allData = jsonData.slice(1).map(row => {
             return headers.reduce((obj, header, index) => {
@@ -122,7 +125,7 @@ const BulkAnalyzer = () => {
     formData.append('file', file);
 
     try {
-      // Start the bulk processing job
+      // Using your API endpoint /api/bulk/predict
       const response = await axios.post(
         'https://predictive-model-backend.onrender.com/api/bulk/predict',
         formData,
@@ -134,7 +137,6 @@ const BulkAnalyzer = () => {
 
       if (response.data && response.data.jobId) {
         setJobId(response.data.jobId);
-        // Start polling for results
         startPolling(response.data.jobId);
       } else {
         throw new Error('Invalid response from server');
@@ -147,14 +149,13 @@ const BulkAnalyzer = () => {
   };
 
   const startPolling = (jobId) => {
-    // Clear any existing interval
     if (pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current);
     }
 
-    // Poll every 2 seconds
     pollIntervalRef.current = setInterval(async () => {
       try {
+        // Using your API endpoint /api/bulk/status/{job_id}
         const response = await axios.get(
           `https://predictive-model-backend.onrender.com/api/bulk/status/${jobId}`
         );
@@ -171,7 +172,6 @@ const BulkAnalyzer = () => {
           setError(data.error || 'Processing failed');
           setProcessing(false);
         } else {
-          // Update progress
           setProgress(data.progress || 0);
         }
       } catch (err) {
@@ -184,7 +184,7 @@ const BulkAnalyzer = () => {
   };
 
   const downloadResults = () => {
-    if (!results || !originalData) return;
+    if (!results || !originalData || !originalHeaders) return;
 
     // Merge original data with predictions
     const mergedData = originalData.map((row, index) => {
@@ -193,12 +193,12 @@ const BulkAnalyzer = () => {
         ...row,
         'Prediction': prediction.prediction || 'N/A',
         'Probability': prediction.probability ? `${(prediction.probability * 100).toFixed(2)}%` : 'N/A',
-        'Success Rate': prediction.success_probability ? `${(prediction.success_probability * 100).toFixed(2)}%` : 'N/A',
-        'Confidence': prediction.confidence || 'Medium'
+        'Success Probability': prediction.success_probability ? `${(prediction.success_probability * 100).toFixed(2)}%` : 'N/A',
+        'Confidence': prediction.confidence || 'N/A'
       };
     });
 
-    // Create worksheet
+    // Create worksheet with all columns
     const ws = XLSX.utils.json_to_sheet(mergedData);
     
     // Create workbook
@@ -276,7 +276,7 @@ const BulkAnalyzer = () => {
       return { ...row, ...prediction };
     });
 
-    const allHeaders = [...preview.headers, 'Prediction', 'Probability', 'Success Rate'];
+    const allHeaders = [...originalHeaders, 'Prediction', 'Probability', 'Success Probability', 'Confidence'];
 
     return (
       <div className="table-container">
@@ -291,7 +291,7 @@ const BulkAnalyzer = () => {
           <tbody>
             {previewData.map((row, rowIndex) => (
               <tr key={rowIndex}>
-                {preview.headers.map((header, colIndex) => (
+                {originalHeaders.map((header, colIndex) => (
                   <td key={colIndex}>{row[header]}</td>
                 ))}
                 <td>
@@ -302,6 +302,11 @@ const BulkAnalyzer = () => {
                 </td>
                 <td>{row.probability ? `${(row.probability * 100).toFixed(2)}%` : 'N/A'}</td>
                 <td>{row.success_probability ? `${(row.success_probability * 100).toFixed(2)}%` : 'N/A'}</td>
+                <td>
+                  <span className={`confidence-badge ${row.confidence?.toLowerCase()}`}>
+                    {row.confidence}
+                  </span>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -324,6 +329,18 @@ const BulkAnalyzer = () => {
       { name: 'Successful', value: summary.successful },
       { name: 'Failed', value: summary.failed }
     ];
+
+    // Calculate confidence distribution
+    const confidenceCounts = results.predictions.reduce((acc, curr) => {
+      const conf = curr.confidence || 'Low';
+      acc[conf] = (acc[conf] || 0) + 1;
+      return acc;
+    }, {});
+
+    const confidenceData = Object.entries(confidenceCounts).map(([name, value]) => ({
+      name,
+      value
+    }));
 
     return (
       <div className="charts-container">
@@ -348,6 +365,25 @@ const BulkAnalyzer = () => {
             </PieChart>
           </ResponsiveContainer>
         </div>
+
+        <div className="chart-card">
+          <h3>Confidence Distribution</h3>
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={confidenceData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+              <XAxis dataKey="name" stroke="#888" />
+              <YAxis stroke="#888" />
+              <Tooltip />
+              <Bar dataKey="value" fill="url(#colorGradient)" />
+              <defs>
+                <linearGradient id="colorGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#00ffff" stopOpacity={1}/>
+                  <stop offset="100%" stopColor="#ff00ff" stopOpacity={1}/>
+                </linearGradient>
+              </defs>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
       </div>
     );
   };
@@ -358,7 +394,7 @@ const BulkAnalyzer = () => {
         <h2>
           <FaMagic /> Bulk Analysis
         </h2>
-        <p>Upload a CSV or Excel file for batch prediction</p>
+        <p>Upload a CSV or Excel file containing 'pain_point' column for batch prediction</p>
       </div>
 
       <div className="upload-section">
@@ -479,7 +515,7 @@ const BulkAnalyzer = () => {
               className={`tab ${activeTab === 'charts' ? 'active' : ''}`}
               onClick={() => setActiveTab('charts')}
             >
-              <FaChartBar /> Charts
+              <FaChartPie /> Charts
             </button>
           </div>
 
