@@ -20,7 +20,9 @@ import {
   FaDatabase,
   FaPercentage,
   FaClock,
-  FaHourglassHalf
+  FaHourglassHalf,
+  FaServer,
+  FaPlug
 } from 'react-icons/fa';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -40,11 +42,34 @@ const BulkAnalyzer = () => {
   const [jobId, setJobId] = useState(null);
   const [estimatedTime, setEstimatedTime] = useState(null);
   const [startTime, setStartTime] = useState(null);
+  const [serverStatus, setServerStatus] = useState('checking');
   const fileInputRef = useRef(null);
   const pollIntervalRef = useRef(null);
   const timeoutRef = useRef(null);
 
+  const BASE_URL = 'https://predictive-model-backend.onrender.com';
   const COLORS = ['#00ffff', '#ff00ff', '#00ff88', '#ff8800'];
+
+  // Check server health on component mount
+  React.useEffect(() => {
+    checkServerHealth();
+  }, []);
+
+  const checkServerHealth = async () => {
+    try {
+      const response = await axios.get(`${BASE_URL}/`, { timeout: 5000 });
+      if (response.status === 200) {
+        setServerStatus('online');
+        setError(null);
+      } else {
+        setServerStatus('offline');
+      }
+    } catch (err) {
+      console.error('Server health check failed:', err);
+      setServerStatus('offline');
+      setError('Cannot connect to server. The server might be starting up (takes 30-60 seconds on Render free tier).');
+    }
+  };
 
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
@@ -121,6 +146,11 @@ const BulkAnalyzer = () => {
       return;
     }
 
+    if (serverStatus === 'offline') {
+      setError('Server is offline. Please wait for it to start up (takes 30-60 seconds).');
+      return;
+    }
+
     setProcessing(true);
     setProgress(0);
     setError(null);
@@ -132,20 +162,22 @@ const BulkAnalyzer = () => {
     formData.append('file', file);
 
     try {
+      // Using the bulk upload endpoint from your main.py
       const response = await axios.post(
-        'https://predictive-model-backend.onrender.com/api/bulk/predict',
+        `${BASE_URL}/upload-bulk`,
         formData,
         {
           headers: { 'Content-Type': 'multipart/form-data' },
-          timeout: 30000 // Increased to 30 seconds for upload
+          timeout: 30000
         }
       );
+
+      console.log('Upload response:', response.data);
 
       if (response.data && response.data.jobId) {
         setJobId(response.data.jobId);
         startPolling(response.data.jobId);
         
-        // Set a timeout for the entire process (10 minutes)
         timeoutRef.current = setTimeout(() => {
           stopPolling();
           setError('Processing is taking longer than expected. The job is still running but you can check back later.');
@@ -156,7 +188,19 @@ const BulkAnalyzer = () => {
       }
     } catch (err) {
       console.error('Upload error:', err);
-      setError(err.response?.data?.detail || err.message || 'Failed to start processing');
+      
+      if (err.code === 'ECONNABORTED') {
+        setError('Request timeout. The server might be busy. Please try again.');
+      } else if (err.response?.status === 404) {
+        setError('Upload endpoint not found. Please check if the server has the bulk upload feature.');
+      } else if (err.response?.status === 500) {
+        setError('Server error. Please try again with a smaller file.');
+      } else if (err.message.includes('Network Error')) {
+        setError('Cannot connect to server. The Render free tier server might be sleeping. Please wait 30-60 seconds and try again.');
+      } else {
+        setError(err.response?.data?.detail || err.message || 'Failed to start processing');
+      }
+      
       setProcessing(false);
     }
   };
@@ -177,14 +221,15 @@ const BulkAnalyzer = () => {
       clearInterval(pollIntervalRef.current);
     }
 
-    // Poll every 5 seconds (increased from 2 seconds to reduce load)
     pollIntervalRef.current = setInterval(async () => {
       try {
+        // Using the bulk status endpoint from your main.py
         const response = await axios.get(
-          `https://predictive-model-backend.onrender.com/api/bulk/status/${jobId}`,
-          { timeout: 10000 } // 10 second timeout for status check
+          `${BASE_URL}/bulk-status/${jobId}`,
+          { timeout: 10000 }
         );
 
+        console.log('Status response:', response.data);
         const data = response.data;
         
         if (data.status === 'completed') {
@@ -199,13 +244,12 @@ const BulkAnalyzer = () => {
         } else {
           setProgress(data.progress || 0);
           
-          // Calculate estimated time remaining
           if (startTime && data.progress > 0) {
             const elapsedSeconds = (Date.now() - startTime) / 1000;
             const totalEstimatedSeconds = (elapsedSeconds / data.progress) * 100;
             const remainingSeconds = totalEstimatedSeconds - elapsedSeconds;
             
-            if (remainingSeconds > 0) {
+            if (remainingSeconds > 0 && remainingSeconds < 3600) {
               const minutes = Math.floor(remainingSeconds / 60);
               const seconds = Math.floor(remainingSeconds % 60);
               setEstimatedTime(`${minutes}m ${seconds}s`);
@@ -214,66 +258,101 @@ const BulkAnalyzer = () => {
         }
       } catch (err) {
         console.error('Polling error:', err);
-        // Don't stop polling on error, just log it
-        // The job might still be processing
+        // Don't stop polling on error
+        if (err.response?.status === 404) {
+          console.log('Status endpoint not found yet, continuing to poll...');
+        }
       }
-    }, 5000); // Poll every 5 seconds
+    }, 3000);
   };
 
-  const downloadResults = () => {
-    if (!results || !originalData || !originalHeaders) return;
+  const downloadResults = async () => {
+    if (!jobId) return;
 
     try {
-      // Merge original data with predictions
-      const mergedData = originalData.map((row, index) => {
-        const prediction = results.predictions[index] || {};
-        return {
-          ...row,
-          'Prediction': prediction.prediction || 'N/A',
-          'Probability': prediction.probability ? `${(prediction.probability * 100).toFixed(2)}%` : 'N/A',
-          'Success Probability': prediction.success_probability ? `${(prediction.success_probability * 100).toFixed(2)}%` : 'N/A',
-          'Confidence': prediction.confidence || 'N/A'
-        };
-      });
+      // Using the bulk results endpoint from your main.py
+      const response = await axios.get(
+        `${BASE_URL}/bulk-results/${jobId}`,
+        { responseType: 'blob', timeout: 30000 }
+      );
 
-      // Create worksheet with all columns
-      const ws = XLSX.utils.json_to_sheet(mergedData);
-      
-      // Create workbook
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Predictions');
-      
-      // Add summary sheet
-      const summaryData = [
-        ['Bulk Prediction Summary'],
-        ['Generated:', new Date().toLocaleString()],
-        [''],
-        ['Total Records', results.summary.total],
-        ['Successful Predictions', results.summary.successful],
-        ['Failed Predictions', results.summary.failed],
-        ['Success Rate', `${results.summary.successRate.toFixed(2)}%`],
-        [''],
-        ['Prediction Distribution'],
-        ['Prediction', 'Count', 'Percentage'],
-        ['Success', results.summary.successful, `${((results.summary.successful/results.summary.total)*100).toFixed(2)}%`],
-        ['Failure', results.summary.failed, `${((results.summary.failed/results.summary.total)*100).toFixed(2)}%`]
-      ];
-      
-      const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
-      XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
-      
-      // Save file
-      XLSX.writeFile(wb, `bulk-predictions-${new Date().toISOString().split('T')[0]}.xlsx`);
+      // Create download link
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `bulk-results-${jobId}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+
     } catch (err) {
       console.error('Download error:', err);
-      setError('Failed to generate download file');
+      
+      // Fallback: Generate Excel with merged data
+      if (results && originalData && originalHeaders) {
+        const mergedData = originalData.map((row, index) => {
+          const prediction = results.results?.[index] || {};
+          return {
+            ...row,
+            'Prediction': prediction.prediction || 'N/A',
+            'Probability': prediction.probability ? `${(prediction.probability * 100).toFixed(2)}%` : 'N/A',
+            'Success Probability': prediction.success_probability ? `${(prediction.success_probability * 100).toFixed(2)}%` : 'N/A'
+          };
+        });
+
+        const ws = XLSX.utils.json_to_sheet(mergedData);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Predictions');
+        
+        const summaryData = [
+          ['Bulk Prediction Summary'],
+          ['Generated:', new Date().toLocaleString()],
+          [''],
+          ['Total Records', results.summary?.total || 0],
+          ['Successful Predictions', results.summary?.successful || 0],
+          ['Failed Predictions', results.summary?.failed || 0],
+          ['Success Rate', `${((results.summary?.successful / results.summary?.total) * 100 || 0).toFixed(2)}%`]
+        ];
+        
+        const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+        XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+        
+        XLSX.writeFile(wb, `bulk-predictions-${new Date().toISOString().split('T')[0]}.xlsx`);
+      } else {
+        setError('Failed to download results');
+      }
     }
+  };
+
+  const renderServerStatus = () => {
+    if (serverStatus === 'checking') {
+      return (
+        <div className="server-status checking">
+          <FaSpinner className="spinner" />
+          <span>Checking server connection...</span>
+        </div>
+      );
+    } else if (serverStatus === 'offline') {
+      return (
+        <div className="server-status offline">
+          <FaExclamationTriangle />
+          <span>Server is starting up. Please wait 30-60 seconds...</span>
+        </div>
+      );
+    }
+    return null;
   };
 
   const renderSummary = () => {
     if (!results) return null;
 
-    const { summary } = results;
+    const summary = results.summary || {
+      total: 0,
+      successful: 0,
+      failed: 0,
+      successRate: 0
+    };
 
     return (
       <div className="summary-cards">
@@ -302,7 +381,7 @@ const BulkAnalyzer = () => {
           <FaPercentage className="summary-icon rate-icon" />
           <div className="summary-content">
             <h3>Success Rate</h3>
-            <p className="summary-value">{summary.successRate.toFixed(2)}%</p>
+            <p className="summary-value">{summary.successRate?.toFixed(2) || '0'}%</p>
           </div>
         </div>
       </div>
@@ -312,13 +391,14 @@ const BulkAnalyzer = () => {
   const renderTable = () => {
     if (!results || !originalData) return null;
 
-    // Merge first 10 records for preview
+    const predictions = results.results || results.predictions || [];
+    
     const previewData = originalData.slice(0, 10).map((row, index) => {
-      const prediction = results.predictions[index] || {};
+      const prediction = predictions[index] || {};
       return { ...row, ...prediction };
     });
 
-    const allHeaders = [...originalHeaders, 'Prediction', 'Probability', 'Success Probability', 'Confidence'];
+    const allHeaders = [...originalHeaders, 'Prediction', 'Probability', 'Success Probability'];
 
     return (
       <div className="table-container">
@@ -344,18 +424,13 @@ const BulkAnalyzer = () => {
                 </td>
                 <td>{row.probability ? `${(row.probability * 100).toFixed(2)}%` : 'N/A'}</td>
                 <td>{row.success_probability ? `${(row.success_probability * 100).toFixed(2)}%` : 'N/A'}</td>
-                <td>
-                  <span className={`confidence-badge ${row.confidence?.toLowerCase()}`}>
-                    {row.confidence}
-                  </span>
-                </td>
               </tr>
             ))}
           </tbody>
         </table>
         {originalData.length > 10 && (
           <div className="table-note">
-            Showing first 10 of {originalData.length} records. Download Excel file for complete results.
+            Showing first 10 of {originalData.length} records. Download results for complete data.
           </div>
         )}
       </div>
@@ -365,24 +440,16 @@ const BulkAnalyzer = () => {
   const renderCharts = () => {
     if (!results) return null;
 
-    const { summary } = results;
+    const summary = results.summary || {
+      successful: 0,
+      failed: 0,
+      total: 0
+    };
 
     const pieData = [
       { name: 'Successful', value: summary.successful },
       { name: 'Failed', value: summary.failed }
-    ];
-
-    // Calculate confidence distribution
-    const confidenceCounts = results.predictions.reduce((acc, curr) => {
-      const conf = curr.confidence || 'Low';
-      acc[conf] = (acc[conf] || 0) + 1;
-      return acc;
-    }, {});
-
-    const confidenceData = Object.entries(confidenceCounts).map(([name, value]) => ({
-      name,
-      value
-    }));
+    ].filter(item => item.value > 0);
 
     return (
       <div className="charts-container">
@@ -407,25 +474,6 @@ const BulkAnalyzer = () => {
             </PieChart>
           </ResponsiveContainer>
         </div>
-
-        <div className="chart-card">
-          <h3>Confidence Distribution</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={confidenceData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-              <XAxis dataKey="name" stroke="#888" />
-              <YAxis stroke="#888" />
-              <Tooltip />
-              <Bar dataKey="value" fill="url(#colorGradient)" />
-              <defs>
-                <linearGradient id="colorGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#00ffff" stopOpacity={1}/>
-                  <stop offset="100%" stopColor="#ff00ff" stopOpacity={1}/>
-                </linearGradient>
-              </defs>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
       </div>
     );
   };
@@ -439,16 +487,19 @@ const BulkAnalyzer = () => {
         <p>Upload a CSV or Excel file containing 'pain_point' column for batch prediction</p>
       </div>
 
+      {renderServerStatus()}
+
       <div className="upload-section">
         <div 
-          className={`upload-area ${file ? 'file-selected' : ''}`}
-          onClick={() => fileInputRef.current.click()}
+          className={`upload-area ${file ? 'file-selected' : ''} ${serverStatus === 'offline' ? 'disabled' : ''}`}
+          onClick={() => serverStatus === 'online' && fileInputRef.current.click()}
         >
           <input
             type="file"
             ref={fileInputRef}
             onChange={handleFileUpload}
             accept=".csv,.xlsx"
+            disabled={serverStatus === 'offline'}
             style={{ display: 'none' }}
           />
           <FaCloudUploadAlt className="upload-icon" />
@@ -505,7 +556,7 @@ const BulkAnalyzer = () => {
           <button
             className="process-button"
             onClick={processBulkAnalysis}
-            disabled={!file || processing}
+            disabled={!file || processing || serverStatus === 'offline'}
           >
             {processing ? (
               <>
@@ -559,8 +610,8 @@ const BulkAnalyzer = () => {
               <FaCheckCircle /> Analysis Complete!
             </h3>
             <button className="download-button" onClick={downloadResults}>
-              <FaFileExcel />
-              Download Excel Results
+              <FaDownload />
+              Download Results
             </button>
           </div>
 
