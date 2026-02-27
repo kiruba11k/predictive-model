@@ -22,7 +22,9 @@ import {
   FaClock,
   FaHourglassHalf,
   FaInfoCircle,
-  FaSkipForward
+  FaBan,
+  FaExclamationCircle,
+  FaArrowRight
 } from 'react-icons/fa';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -307,7 +309,7 @@ const BulkAnalyzer = () => {
             'Probability': prediction.probability ? `${(prediction.probability * 100).toFixed(2)}%` : 'N/A',
             'Success Probability': prediction.success_probability ? `${(prediction.success_probability * 100).toFixed(2)}%` : 'N/A',
             'Confidence': prediction.confidence || 'N/A',
-            'Note': prediction.note || ''
+            'Note': prediction.note || prediction.error || ''
           };
         });
 
@@ -347,7 +349,7 @@ const BulkAnalyzer = () => {
     } else if (serverStatus === 'offline') {
       return (
         <div className="server-status offline">
-          <FaExclamationTriangle />
+          <FaExclamationCircle />
           <span>Server is starting up. Please wait 30-60 seconds...</span>
         </div>
       );
@@ -406,7 +408,7 @@ const BulkAnalyzer = () => {
           </div>
         </div>
         <div className="summary-card">
-          <FaSkipForward className="summary-icon skip-icon" />
+          <FaBan className="summary-icon skip-icon" />
           <div className="summary-content">
             <h3>Skipped</h3>
             <p className="summary-value skipped">{summary.skipped}</p>
@@ -455,7 +457,8 @@ const BulkAnalyzer = () => {
                   <span className={`prediction-badge ${row.prediction?.toLowerCase()}`}>
                     {row.prediction === 'Success' && <FaCheck />}
                     {row.prediction === 'Failure' && <FaTimes />}
-                    {row.prediction === 'Skipped' && <FaSkipForward />}
+                    {row.prediction === 'Skipped' && <FaBan />}
+                    {row.prediction === 'Error' && <FaExclamationCircle />}
                     {row.prediction}
                   </span>
                 </td>
@@ -466,7 +469,7 @@ const BulkAnalyzer = () => {
                     {row.confidence}
                   </span>
                 </td>
-                <td>{row.note || ''}</td>
+                <td>{row.note || row.error || ''}</td>
               </tr>
             ))}
           </tbody>
