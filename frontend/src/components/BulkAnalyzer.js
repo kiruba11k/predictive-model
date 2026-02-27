@@ -24,7 +24,9 @@ import {
   FaInfoCircle,
   FaBan,
   FaExclamationCircle,
-  FaArrowRight
+  FaForward,
+  FaStepForward,
+  FaFastForward
 } from 'react-icons/fa';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
