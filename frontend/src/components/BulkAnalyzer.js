@@ -18,7 +18,9 @@ import {
   FaCheck,
   FaTimes,
   FaDatabase,
-  FaPercentage
+  FaPercentage,
+  FaClock,
+  FaHourglassHalf
 } from 'react-icons/fa';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -36,8 +38,11 @@ const BulkAnalyzer = () => {
   const [activeTab, setActiveTab] = useState('table');
   const [progress, setProgress] = useState(0);
   const [jobId, setJobId] = useState(null);
+  const [estimatedTime, setEstimatedTime] = useState(null);
+  const [startTime, setStartTime] = useState(null);
   const fileInputRef = useRef(null);
   const pollIntervalRef = useRef(null);
+  const timeoutRef = useRef(null);
 
   const COLORS = ['#00ffff', '#ff00ff', '#00ff88', '#ff8800'];
 
@@ -120,24 +125,32 @@ const BulkAnalyzer = () => {
     setProgress(0);
     setError(null);
     setResults(null);
+    setStartTime(Date.now());
+    setEstimatedTime(null);
 
     const formData = new FormData();
     formData.append('file', file);
 
     try {
-      // Using your API endpoint /api/bulk/predict
       const response = await axios.post(
         'https://predictive-model-backend.onrender.com/api/bulk/predict',
         formData,
         {
           headers: { 'Content-Type': 'multipart/form-data' },
-          timeout: 10000
+          timeout: 30000 // Increased to 30 seconds for upload
         }
       );
 
       if (response.data && response.data.jobId) {
         setJobId(response.data.jobId);
         startPolling(response.data.jobId);
+        
+        // Set a timeout for the entire process (10 minutes)
+        timeoutRef.current = setTimeout(() => {
+          stopPolling();
+          setError('Processing is taking longer than expected. The job is still running but you can check back later.');
+          setProcessing(false);
+        }, 600000); // 10 minutes
       } else {
         throw new Error('Invalid response from server');
       }
@@ -148,84 +161,113 @@ const BulkAnalyzer = () => {
     }
   };
 
+  const stopPolling = () => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+  };
+
   const startPolling = (jobId) => {
     if (pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current);
     }
 
+    // Poll every 5 seconds (increased from 2 seconds to reduce load)
     pollIntervalRef.current = setInterval(async () => {
       try {
-        // Using your API endpoint /api/bulk/status/{job_id}
         const response = await axios.get(
-          `https://predictive-model-backend.onrender.com/api/bulk/status/${jobId}`
+          `https://predictive-model-backend.onrender.com/api/bulk/status/${jobId}`,
+          { timeout: 10000 } // 10 second timeout for status check
         );
 
         const data = response.data;
         
         if (data.status === 'completed') {
-          clearInterval(pollIntervalRef.current);
+          stopPolling();
           setResults(data.results);
           setProcessing(false);
           setProgress(100);
         } else if (data.status === 'failed') {
-          clearInterval(pollIntervalRef.current);
+          stopPolling();
           setError(data.error || 'Processing failed');
           setProcessing(false);
         } else {
           setProgress(data.progress || 0);
+          
+          // Calculate estimated time remaining
+          if (startTime && data.progress > 0) {
+            const elapsedSeconds = (Date.now() - startTime) / 1000;
+            const totalEstimatedSeconds = (elapsedSeconds / data.progress) * 100;
+            const remainingSeconds = totalEstimatedSeconds - elapsedSeconds;
+            
+            if (remainingSeconds > 0) {
+              const minutes = Math.floor(remainingSeconds / 60);
+              const seconds = Math.floor(remainingSeconds % 60);
+              setEstimatedTime(`${minutes}m ${seconds}s`);
+            }
+          }
         }
       } catch (err) {
         console.error('Polling error:', err);
-        clearInterval(pollIntervalRef.current);
-        setError('Failed to get processing status');
-        setProcessing(false);
+        // Don't stop polling on error, just log it
+        // The job might still be processing
       }
-    }, 2000);
+    }, 5000); // Poll every 5 seconds
   };
 
   const downloadResults = () => {
     if (!results || !originalData || !originalHeaders) return;
 
-    // Merge original data with predictions
-    const mergedData = originalData.map((row, index) => {
-      const prediction = results.predictions[index] || {};
-      return {
-        ...row,
-        'Prediction': prediction.prediction || 'N/A',
-        'Probability': prediction.probability ? `${(prediction.probability * 100).toFixed(2)}%` : 'N/A',
-        'Success Probability': prediction.success_probability ? `${(prediction.success_probability * 100).toFixed(2)}%` : 'N/A',
-        'Confidence': prediction.confidence || 'N/A'
-      };
-    });
+    try {
+      // Merge original data with predictions
+      const mergedData = originalData.map((row, index) => {
+        const prediction = results.predictions[index] || {};
+        return {
+          ...row,
+          'Prediction': prediction.prediction || 'N/A',
+          'Probability': prediction.probability ? `${(prediction.probability * 100).toFixed(2)}%` : 'N/A',
+          'Success Probability': prediction.success_probability ? `${(prediction.success_probability * 100).toFixed(2)}%` : 'N/A',
+          'Confidence': prediction.confidence || 'N/A'
+        };
+      });
 
-    // Create worksheet with all columns
-    const ws = XLSX.utils.json_to_sheet(mergedData);
-    
-    // Create workbook
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Predictions');
-    
-    // Add summary sheet
-    const summaryData = [
-      ['Bulk Prediction Summary'],
-      ['Generated:', new Date().toLocaleString()],
-      [''],
-      ['Total Records', results.summary.total],
-      ['Successful Predictions', results.summary.successful],
-      ['Failed Predictions', results.summary.failed],
-      ['Success Rate', `${results.summary.successRate.toFixed(2)}%`],
-      [''],
-      ['Prediction Distribution'],
-      ['Prediction', 'Count', 'Percentage'],
-      ['Success', results.summary.successful, `${((results.summary.successful/results.summary.total)*100).toFixed(2)}%`],
-      ['Failure', results.summary.failed, `${((results.summary.failed/results.summary.total)*100).toFixed(2)}%`]
-    ];
-    
-    const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
-    XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
-    
-    // Save file
-    XLSX.writeFile(wb, `bulk-predictions-${new Date().toISOString().split('T')[0]}.xlsx`);
+      // Create worksheet with all columns
+      const ws = XLSX.utils.json_to_sheet(mergedData);
+      
+      // Create workbook
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Predictions');
+      
+      // Add summary sheet
+      const summaryData = [
+        ['Bulk Prediction Summary'],
+        ['Generated:', new Date().toLocaleString()],
+        [''],
+        ['Total Records', results.summary.total],
+        ['Successful Predictions', results.summary.successful],
+        ['Failed Predictions', results.summary.failed],
+        ['Success Rate', `${results.summary.successRate.toFixed(2)}%`],
+        [''],
+        ['Prediction Distribution'],
+        ['Prediction', 'Count', 'Percentage'],
+        ['Success', results.summary.successful, `${((results.summary.successful/results.summary.total)*100).toFixed(2)}%`],
+        ['Failure', results.summary.failed, `${((results.summary.failed/results.summary.total)*100).toFixed(2)}%`]
+      ];
+      
+      const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+      XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+      
+      // Save file
+      XLSX.writeFile(wb, `bulk-predictions-${new Date().toISOString().split('T')[0]}.xlsx`);
+    } catch (err) {
+      console.error('Download error:', err);
+      setError('Failed to generate download file');
+    }
   };
 
   const renderSummary = () => {
@@ -481,12 +523,32 @@ const BulkAnalyzer = () => {
       </div>
 
       {processing && (
-        <div className="progress-bar-container">
-          <div 
-            className="progress-bar"
-            style={{ width: `${progress}%` }}
-          />
-          <span className="progress-text">{progress}% Complete</span>
+        <div className="progress-section">
+          <div className="progress-bar-container">
+            <div 
+              className="progress-bar"
+              style={{ width: `${progress}%` }}
+            />
+            <span className="progress-text">{progress}% Complete</span>
+          </div>
+          
+          <div className="progress-info">
+            <FaHourglassHalf className="progress-info-icon" />
+            <span>
+              {estimatedTime ? (
+                <>Estimated time remaining: {estimatedTime}</>
+              ) : (
+                <>Processing {originalData?.length || 0} records... This may take a few minutes</>
+              )}
+            </span>
+          </div>
+
+          {progress > 0 && progress < 100 && (
+            <div className="progress-note">
+              <FaClock />
+              <span>Don't close this window. You'll be able to download results when complete.</span>
+            </div>
+          )}
         </div>
       )}
 
@@ -494,7 +556,7 @@ const BulkAnalyzer = () => {
         <div className="results-section">
           <div className="results-header">
             <h3>
-              <FaCheckCircle /> Analysis Complete
+              <FaCheckCircle /> Analysis Complete!
             </h3>
             <button className="download-button" onClick={downloadResults}>
               <FaFileExcel />
