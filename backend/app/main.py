@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import SessionLocal, Lead
 from app.model import Predictor
@@ -8,148 +8,338 @@ import logging
 import pandas as pd
 import asyncio
 import uuid
-from typing import Dict, Optional
+from typing import Dict
 import io
 import csv
+from fastapi import UploadFile, File, Form
 from fastapi.responses import StreamingResponse
-
 # Set up logging
-from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks
-from fastapi.middleware.cors import CORSMiddleware
-from app.database import SessionLocal, Lead
-from app.model import Predictor
-import pandas as pd
-import asyncio
-import uuid
-import io
-import time
-import logging
-from typing import Dict
-
-# Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# CORS for Frontend access
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # In production, replace with your frontend URL
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Global State
+# Initialize predictor (this might take a moment on first request)
 predictor = None
-bulk_jobs: Dict[str, dict] = {}
 
 def get_predictor():
     global predictor
     if predictor is None:
-        logger.info("Loading ML Model...")
+        logger.info("Loading predictor model...")
         predictor = Predictor()
+        logger.info("Predictor loaded successfully")
     return predictor
 
-async def run_bulk_inference(job_id: str, df: pd.DataFrame):
-    """Background task: Processes rows one by one to avoid timeouts"""
-    job = bulk_jobs[job_id]
-    model = get_predictor()
-    results = []
-    
-    try:
-        for index, row in df.iterrows():
-            # Get pain_point from any column variation
-            pain_point = str(row.get('pain_point', row.get('Pain Point', ''))).strip()
-            
-            if not pain_point:
-                res = {**row.to_dict(), "prediction": "Skipped", "probability": 0, "confidence": "N/A"}
-            else:
-                # Run prediction in a separate thread to keep the API responsive
-                pred, prob = await asyncio.to_thread(model.predict, pain_point)
-                
-                res = {
-                    **row.to_dict(),
-                    "prediction": "Success" if pred == 1 else "Failure",
-                    "probability": float(prob),
-                    "confidence": "High" if prob > 0.8 else "Medium" if prob > 0.5 else "Low"
-                }
-            
-            results.append(res)
-            
-            # Update Progress for Polling
-            job["progress"] = int(((index + 1) / len(df)) * 100)
-            job["processed"] = index + 1
-            
-            # Prevent CPU lockout on Render Free Tier
-            if index % 5 == 0:
-                await asyncio.sleep(0.01)
+# Add these imports at the top
 
-        job["status"] = "completed"
-        job["results"] = results
-        logger.info(f"Bulk Job {job_id} Completed.")
 
-    except Exception as e:
-        logger.error(f"Job {job_id} Failed: {str(e)}")
-        job["status"] = "failed"
-        job["error"] = str(e)
+# Add these to your existing main.py
+
+# Store for bulk jobs
+bulk_jobs: Dict[str, dict] = {}
 
 @app.post("/upload-bulk")
-async def upload_bulk(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+async def upload_bulk(file: UploadFile = File(...)):
+    """
+    Upload CSV/Excel file for bulk prediction
+    """
     try:
+        # Generate job ID
+        job_id = str(uuid.uuid4())
+        
+        # Read file content
         content = await file.read()
+        
+        # Determine file type and read data
         if file.filename.endswith('.csv'):
             df = pd.read_csv(io.BytesIO(content))
-        else:
+        elif file.filename.endswith(('.xlsx', '.xls')):
             df = pd.read_excel(io.BytesIO(content))
-
-        # Validate Column
-        if not any(col.lower() == 'pain_point' for col in df.columns):
-            # Try to rename if it's close
-            df.columns = [c.lower().replace(' ', '_') for c in df.columns]
-            if 'pain_point' not in df.columns:
-                raise HTTPException(status_code=400, detail="File must have a 'pain_point' column.")
-
-        job_id = str(uuid.uuid4())
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported file format")
+        
+        # Check if 'pain_point' column exists
+        if 'pain_point' not in df.columns:
+            raise HTTPException(status_code=400, detail="CSV must contain 'pain_point' column")
+        
+        # Store job info
         bulk_jobs[job_id] = {
-            "status": "processing",
-            "progress": 0,
-            "total": len(df),
-            "processed": 0,
-            "results": None,
-            "created_at": time.time()
+            'status': 'processing',
+            'progress': 0,
+            'total': len(df),
+            'data': df.to_dict('records'),
+            'results': [],
+            'summary': {
+                'total': len(df),
+                'successful': 0,
+                'failed': 0
+            }
         }
-
-        background_tasks.add_task(run_bulk_inference, job_id, df)
-        return {"jobId": job_id}
+        
+        # Start processing in background
+        asyncio.create_task(process_bulk_job(job_id))
+        
+        return {
+            'jobId': job_id,
+            'status': 'processing',
+            'total': len(df)
+        }
+        
     except Exception as e:
+        logger.error(f"Bulk upload error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/bulk-status/{job_id}")
-async def get_status(job_id: str):
-    job = bulk_jobs.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job expired or not found.")
+async def process_bulk_job(job_id: str):
+    """
+    Process bulk prediction job
+    """
+    job = bulk_jobs[job_id]
+    model = get_predictor()
     
-    # Return minimal data if still processing to save bandwidth
-    if job["status"] == "processing":
-        return {k: v for k, v in job.items() if k != "results"}
-    return job
+    results = []
+    successful = 0
+    failed = 0
+    
+    for idx, row in enumerate(job['data']):
+        try:
+            pain_point = row.get('pain_point', '')
+            if pain_point and str(pain_point).strip():
+                pred, prob = model.predict(str(pain_point).strip())
+                
+                result = {
+                    'pain_point': pain_point,
+                    'prediction': 'Success' if pred == 1 else 'Failure',
+                    'probability': float(prob),
+                    'success_probability': float(prob) if pred == 1 else 1 - float(prob)
+                }
+                
+                if pred == 1:
+                    successful += 1
+                else:
+                    failed += 1
+                    
+                results.append(result)
+                
+                # Save to database (optional, can be commented out for performance)
+                # db = SessionLocal()
+                # try:
+                #     lead = Lead(
+                #         pain_point=str(pain_point).strip(),
+                #         prediction=result['prediction'],
+                #         probability=float(prob)
+                #     )
+                #     db.add(lead)
+                #     db.commit()
+                # finally:
+                #     db.close()
+            
+        except Exception as e:
+            logger.error(f"Error processing row {idx}: {str(e)}")
+            results.append({
+                'pain_point': row.get('pain_point', ''),
+                'prediction': 'Error',
+                'probability': 0,
+                'success_probability': 0,
+                'error': str(e)
+            })
+            failed += 1
+        
+        # Update progress
+        job['progress'] = int(((idx + 1) / job['total']) * 100)
+        job['results'] = results
+        job['summary']['successful'] = successful
+        job['summary']['failed'] = failed
+        
+        # Small delay to prevent overwhelming
+        await asyncio.sleep(0.01)
+    
+    job['status'] = 'completed'
+    job['results'] = results
+    job['summary'] = {
+        'total': job['total'],
+        'successful': successful,
+        'failed': failed
+    }
 
-@app.on_event("startup")
-async def schedule_cleanup():
-    """Removes old jobs from memory every 30 minutes"""
-    async def cleanup():
-        while True:
-            await asyncio.sleep(1800) # 30 mins
-            now = time.time()
-            to_delete = [jid for jid, j in bulk_jobs.items() if now - j["created_at"] > 3600]
-            for jid in to_delete:
-                del bulk_jobs[jid]
-                logger.info(f"Cleaned up Job {jid}")
-    asyncio.create_task(cleanup())
+@app.get("/bulk-status/{job_id}")
+async def get_bulk_status(job_id: str):
+    """
+    Get status of bulk processing job
+    """
+    if job_id not in bulk_jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job = bulk_jobs[job_id]
+    
+    if job['status'] == 'completed':
+        return {
+            'status': 'completed',
+            'progress': 100,
+            'results': job
+        }
+    elif job['status'] == 'failed':
+        return {
+            'status': 'failed',
+            'error': job.get('error', 'Processing failed')
+        }
+    else:
+        return {
+            'status': 'processing',
+            'progress': job['progress'],
+            'total': job['total'],
+            'processed': len(job['results'])
+        }
+
+@app.get("/bulk-results/{job_id}")
+async def get_bulk_results(job_id: str):
+    """
+    Download bulk results as CSV
+    """
+    if job_id not in bulk_jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job = bulk_jobs[job_id]
+    
+    if job['status'] != 'completed':
+        raise HTTPException(status_code=400, detail="Job not completed")
+    
+    # Create CSV
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    # Write header
+    writer.writerow(['Pain Point', 'Prediction', 'Probability', 'Success Probability'])
+    
+    # Write data
+    for result in job['results']:
+        writer.writerow([
+            result['pain_point'],
+            result['prediction'],
+            f"{result['probability']:.4f}",
+            f"{result['success_probability']:.4f}"
+        ])
+    
+    output.seek(0)
+    
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=bulk-results-{job_id}.csv"}
+    )
+@app.get("/")
+def root():
+    return {"status": "Server is running", "message": "Use POST /predict?pain_point=your_text"}
+
+@app.post("/predict")
+def predict(pain_point: str):
+    """
+    Predict lead success based on pain point
+    """
+    start_time = time.time()
+    
+    if not pain_point or not pain_point.strip():
+        raise HTTPException(status_code=400, detail="Pain point cannot be empty")
+    
+    try:
+        logger.info(f"Making prediction for: {pain_point[:50]}...")
+        
+        # Get predictor (lazy loading)
+        model = get_predictor()
+        
+        # Make prediction
+        pred, prob = model.predict(pain_point.strip())
+        
+        logger.info(f"Prediction completed in {time.time() - start_time:.2f}s")
+        
+        # Save to database
+        db = SessionLocal()
+        try:
+            lead = Lead(
+                pain_point=pain_point.strip(),
+                prediction="Success" if pred == 1 else "Failure",
+                probability=float(prob)
+            )
+            
+            db.add(lead)
+            db.commit()
+            
+            logger.info(f"Lead saved to database with ID: {lead.id}")
+            
+            return {
+                "prediction": lead.prediction,
+                "probability": lead.probability,
+                "id": lead.id
+            }
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"Prediction error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
+
+@app.post("/learn")
+def learn(pain_point: str, actual: str):
+    """
+    Teach the model with actual results
+    """
+    if actual not in ["Yes", "No"]:
+        raise HTTPException(status_code=400, detail="Actual must be 'Yes' or 'No'")
+    
+    try:
+        logger.info(f"Learning from: {pain_point[:50]}... -> {actual}")
+        
+        # Get predictor
+        model = get_predictor()
+        
+        # Learn from feedback
+        model.learn(pain_point.strip(), actual)
+        
+        # Update database
+        db = SessionLocal()
+        try:
+            lead = db.query(Lead).filter(
+                Lead.pain_point == pain_point.strip()
+            ).first()
+            
+            if lead:
+                lead.actual = actual
+                db.commit()
+                logger.info(f"Updated lead {lead.id} with actual result")
+            
+            return {
+                "status": "learned",
+                "message": "Model updated successfully"
+            }
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"Learning error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Learning failed: {str(e)}")
 
 @app.get("/health")
-def health():
-    return {"status": "online", "memory_jobs": len(bulk_jobs)}
+def health_check():
+    """Check if server is healthy"""
+    try:
+        # Try to initialize predictor if not already loaded
+        model = get_predictor()
+        return {
+            "status": "healthy",
+            "predictor_loaded": model is not None,
+            "database": "connected"
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        return {
+            "status": "unhealthy",
+            "error": str(e)
+        }
