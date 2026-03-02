@@ -47,6 +47,53 @@ def get_predictor():
 # Store for bulk jobs
 bulk_jobs: Dict[str, dict] = {}
 
+
+def normalize_header(value: str) -> str:
+    return ''.join(ch for ch in str(value).lower() if ch.isalnum())
+
+
+def find_pain_point_key(row: dict):
+    keys = list(row.keys())
+
+    exact = next((key for key in keys if normalize_header(key) == 'painpoint'), None)
+    if exact:
+        return exact
+
+    return next(
+        (
+            key for key in keys
+            if 'pain' in normalize_header(key) and 'point' in normalize_header(key)
+        ),
+        None
+    )
+
+
+def find_success_key(row: dict):
+    keys = list(row.keys())
+
+    exact = next((key for key in keys if normalize_header(key) == 'success'), None)
+    if exact:
+        return exact
+
+    return next(
+        (
+            key for key in keys
+            if any(token in normalize_header(key) for token in ['actual', 'label', 'result'])
+        ),
+        None
+    )
+
+
+def normalize_actual_value(value) -> str:
+    normalized = str(value or '').strip().lower()
+
+    if normalized in {'yes', 'y', '1', 'true', 'success', 'successful'}:
+        return 'Yes'
+    if normalized in {'no', 'n', '0', 'false', 'failure', 'failed'}:
+        return 'No'
+
+    raise ValueError(f"Unsupported success value: {value}")
+
 @app.post("/upload-bulk")
 async def upload_bulk(file: UploadFile = File(...)):
     """
@@ -108,10 +155,13 @@ async def process_bulk_job(job_id: str):
     results = []
     successful = 0
     failed = 0
+    skipped = 0
     
     for idx, row in enumerate(job['data']):
         try:
-            pain_point = row.get('pain_point', '')
+            pain_point_key = find_pain_point_key(row)
+            pain_point = row.get(pain_point_key, '') if pain_point_key else ''
+
             if pain_point and str(pain_point).strip():
                 pred, prob = model.predict(str(pain_point).strip())
                 
@@ -128,6 +178,15 @@ async def process_bulk_job(job_id: str):
                     failed += 1
                     
                 results.append(result)
+            else:
+                results.append({
+                    'pain_point': pain_point,
+                    'prediction': 'Skipped',
+                    'probability': 0,
+                    'success_probability': 0,
+                    'note': 'Empty pain point - skipped'
+                })
+                skipped += 1
                 
                 # Save to database (optional, can be commented out for performance)
                 # db = SessionLocal()
@@ -158,6 +217,7 @@ async def process_bulk_job(job_id: str):
         job['results'] = results
         job['summary']['successful'] = successful
         job['summary']['failed'] = failed
+        job['summary']['skipped'] = skipped
         
         # Small delay to prevent overwhelming
         await asyncio.sleep(0.01)
@@ -167,7 +227,8 @@ async def process_bulk_job(job_id: str):
     job['summary'] = {
         'total': job['total'],
         'successful': successful,
-        'failed': failed
+        'failed': failed,
+        'skipped': skipped
     }
 
 @app.get("/bulk-status/{job_id}")
@@ -325,6 +386,82 @@ def learn(pain_point: str, actual: str):
     except Exception as e:
         logger.error(f"Learning error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Learning failed: {str(e)}")
+
+
+@app.post("/learn-upload")
+async def learn_upload(file: UploadFile = File(...)):
+    """
+    Learn from uploaded CSV/Excel containing pain_point and Success columns.
+    """
+    try:
+        content = await file.read()
+
+        if file.filename.endswith('.csv'):
+            df = pd.read_csv(io.BytesIO(content))
+        elif file.filename.endswith(('.xlsx', '.xls')):
+            df = pd.read_excel(io.BytesIO(content))
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported file format")
+
+        if df.empty:
+            raise HTTPException(status_code=400, detail="Uploaded file has no rows")
+
+        records = df.to_dict('records')
+        first_row = records[0]
+        pain_point_key = find_pain_point_key(first_row)
+        success_key = find_success_key(first_row)
+
+        if not pain_point_key or not success_key:
+            raise HTTPException(
+                status_code=400,
+                detail="File must contain pain_point and Success columns"
+            )
+
+        model = get_predictor()
+
+        learning_items = []
+        learned = 0
+        skipped = 0
+        errors = []
+
+        for idx, row in enumerate(records):
+            try:
+                pain_point = str(row.get(pain_point_key, '') or '').strip()
+                actual_raw = row.get(success_key, '')
+
+                if not pain_point:
+                    skipped += 1
+                    continue
+
+                actual = normalize_actual_value(actual_raw)
+                learning_items.append((pain_point, actual))
+                learned += 1
+            except Exception as row_error:
+                skipped += 1
+                if len(errors) < 20:
+                    errors.append({
+                        'row': idx + 2,
+                        'error': str(row_error)
+                    })
+
+        if learning_items:
+            model.learn_batch(learning_items)
+
+        return {
+            'status': 'completed',
+            'total': len(records),
+            'learned': learned,
+            'skipped': skipped,
+            'pain_point_column': pain_point_key,
+            'success_column': success_key,
+            'errors': errors
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Learn upload error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Learn upload failed: {str(e)}")
 
 @app.get("/health")
 def health_check():

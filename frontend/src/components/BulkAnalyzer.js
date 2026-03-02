@@ -73,6 +73,40 @@ const BulkAnalyzer = () => {
     }
   };
 
+  const normalizeHeader = (value) => String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+
+  const resolvePainPointHeader = (headers = []) => {
+    if (!headers.length) return null;
+
+    const exact = headers.find(h => normalizeHeader(h) === 'painpoint');
+    if (exact) return exact;
+
+    const fuzzy = headers.find(h => {
+      const normalized = normalizeHeader(h);
+      return normalized.includes('pain') && normalized.includes('point');
+    });
+
+    return fuzzy || null;
+  };
+
+  const buildRowsFromSheetData = (jsonData) => {
+    if (!jsonData?.length) {
+      throw new Error('File appears to be empty');
+    }
+
+    const headers = jsonData[0].map(h => String(h).trim());
+    const allData = jsonData.slice(1)
+      .filter(row => row.some(cell => String(cell ?? '').trim()))
+      .map(row => headers.reduce((obj, header, index) => {
+        obj[header] = row[index] ?? '';
+        return obj;
+      }, {}));
+
+    return { headers, allData };
+  };
+
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
     if (file) {
@@ -94,37 +128,34 @@ const BulkAnalyzer = () => {
     reader.onload = (e) => {
       try {
         if (file.name.endsWith('.csv')) {
-          const text = e.target.result;
-          const rows = text.split('\n').filter(row => row.trim());
-          const headers = rows[0].split(',').map(h => h.trim());
-          setOriginalHeaders(headers);
-          
-          const allData = rows.slice(1).map(row => {
-            const values = row.split(',').map(v => v.trim());
-            return headers.reduce((obj, header, index) => {
-              obj[header] = values[index] || '';
-              return obj;
-            }, {});
+          const workbook = XLSX.read(e.target.result, { type: 'string' });
+          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+          const jsonData = XLSX.utils.sheet_to_json(firstSheet, {
+            header: 1,
+            defval: '',
+            raw: false
           });
+
+          const { headers, allData } = buildRowsFromSheetData(jsonData);
+          setOriginalHeaders(headers);
+
           setOriginalData(allData);
           setTotalRows(allData.length);
-          
+
           const previewData = allData.slice(0, 5);
           setPreview({ headers, data: previewData });
         } else {
           const data = new Uint8Array(e.target.result);
           const workbook = XLSX.read(data, { type: 'array' });
           const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-          const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
-          const headers = jsonData[0].map(h => String(h).trim());
-          setOriginalHeaders(headers);
-          
-          const allData = jsonData.slice(1).map(row => {
-            return headers.reduce((obj, header, index) => {
-              obj[header] = row[index] || '';
-              return obj;
-            }, {});
+          const jsonData = XLSX.utils.sheet_to_json(firstSheet, {
+            header: 1,
+            defval: '',
+            raw: false
           });
+          const { headers, allData } = buildRowsFromSheetData(jsonData);
+          setOriginalHeaders(headers);
+
           setOriginalData(allData);
           setTotalRows(allData.length);
           
@@ -178,10 +209,59 @@ const BulkAnalyzer = () => {
     });
 
     try {
-      // Process each row sequentially
+      const painPointHeader = resolvePainPointHeader(originalHeaders);
+
+      if (!painPointHeader) {
+        setError('Could not find pain_point column. Please ensure header is named pain_point (or similar).');
+        setProcessing(false);
+        return;
+      }
+
+      const findPainPointValue = (row) => {
+        if (row[painPointHeader] !== undefined) {
+          return row[painPointHeader];
+        }
+
+        const fallbackKey = Object.keys(row).find(
+          key => normalizeHeader(key) === normalizeHeader(painPointHeader)
+        );
+
+        return fallbackKey ? row[fallbackKey] : '';
+      };
+
+      const predictWithRetry = async (painPointText, maxRetries = 3) => {
+        let attempt = 0;
+
+        while (attempt < maxRetries) {
+          try {
+            return await axios.post(
+              `${BASE_URL}/predict?pain_point=${encodeURIComponent(painPointText)}`,
+              null,
+              {
+                signal: abortControllerRef.current.signal,
+                timeout: 45000
+              }
+            );
+          } catch (err) {
+            if (axios.isCancel(err)) {
+              throw err;
+            }
+
+            attempt += 1;
+            if (attempt >= maxRetries) {
+              throw err;
+            }
+
+            const backoffMs = 1500 * attempt;
+            await new Promise(resolve => setTimeout(resolve, backoffMs));
+          }
+        }
+      };
+
+      // Process each row sequentially and wait for each prediction
       for (let i = 0; i < originalData.length; i++) {
         const row = originalData[i];
-        const pain_point = row.pain_point || row['pain_point'] || '';
+        const pain_point = findPainPointValue(row);
         
         // Update current row
         setCurrentRow(i + 1);
@@ -210,15 +290,8 @@ const BulkAnalyzer = () => {
         }
 
         try {
-          // Call the /predict endpoint for each row
-          const response = await axios.post(
-            `${BASE_URL}/predict?pain_point=${encodeURIComponent(pain_point.toString().trim())}`,
-            null,
-            {
-              signal: abortControllerRef.current.signal,
-              timeout: 10000 // 10 second timeout per request
-            }
-          );
+          // Call /predict endpoint for each row with retries (Render free tier can cold-start)
+          const response = await predictWithRetry(pain_point.toString().trim());
 
           if (response.data) {
             const prediction = response.data.prediction;

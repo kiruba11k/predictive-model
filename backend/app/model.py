@@ -66,3 +66,36 @@ class Predictor:
         )
 
         joblib.dump(self.model, MODEL_PATH)
+
+
+    def learn_batch(self, items):
+
+        if not items:
+
+            return
+
+        vectors = []
+
+        labels = []
+
+        for text, actual in items:
+
+            label = 1 if actual == "Yes" else 0
+
+            vec = self.encoder.encode([text])[0]
+
+            vectors.append(vec)
+
+            labels.append(label)
+
+        self.model.partial_fit(
+
+            np.array(vectors),
+
+            np.array(labels),
+
+            classes=np.array([0, 1])
+
+        )
+
+        joblib.dump(self.model, MODEL_PATH)
