@@ -42,9 +42,14 @@ class Predictor:
 
         vec = self.encoder.encode([text])
 
-        prob = self.model.predict_proba(vec)[0][1]
+        
 
-        pred = self.model.predict(vec)[0]
+        try:
+            prob = self.model.predict_proba(vec)[0][1]
+            pred = self.model.predict(vec)[0]
+        except:
+            prob = 0.5
+            pred = 0
 
         return pred, prob
 
