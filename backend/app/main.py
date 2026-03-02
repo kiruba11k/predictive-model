@@ -132,7 +132,10 @@ async def process_bulk_job(job_id: str):
     
     for idx, row in enumerate(job['data']):
         try:
-            pain_point_key = find_pain_point_key(row)
+            pain_point_key = next(
+                (key for key in row.keys() if str(key).strip().lower() == 'pain_point'),
+                None
+            )
             pain_point = row.get(pain_point_key, '') if pain_point_key else ''
 
             if pain_point and str(pain_point).strip():

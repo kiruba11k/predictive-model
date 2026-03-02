@@ -136,8 +136,19 @@ const BulkAnalyzer = () => {
             raw: false
           });
 
-          const { headers, allData } = buildRowsFromSheetData(jsonData);
+          if (!jsonData.length) {
+            throw new Error('CSV file appears to be empty');
+          }
+
+          const headers = jsonData[0].map(h => String(h).trim());
           setOriginalHeaders(headers);
+
+          const allData = jsonData.slice(1)
+            .filter(row => row.some(cell => String(cell || '').trim()))
+            .map(row => headers.reduce((obj, header, index) => {
+              obj[header] = row[index] || '';
+              return obj;
+            }, {}));
 
           setOriginalData(allData);
           setTotalRows(allData.length);
@@ -209,24 +220,16 @@ const BulkAnalyzer = () => {
     });
 
     try {
-      const painPointHeader = resolvePainPointHeader(originalHeaders);
-
-      if (!painPointHeader) {
-        setError('Could not find pain_point column. Please ensure header is named pain_point (or similar).');
-        setProcessing(false);
-        return;
-      }
-
       const findPainPointValue = (row) => {
-        if (row[painPointHeader] !== undefined) {
-          return row[painPointHeader];
-        }
-
-        const fallbackKey = Object.keys(row).find(
-          key => normalizeHeader(key) === normalizeHeader(painPointHeader)
+        const painPointKey = Object.keys(row).find(
+          key => key && key.toString().trim().toLowerCase() === 'pain_point'
         );
 
-        return fallbackKey ? row[fallbackKey] : '';
+        if (!painPointKey) {
+          return '';
+        }
+
+        return row[painPointKey];
       };
 
       const predictWithRetry = async (painPointText, maxRetries = 3) => {
