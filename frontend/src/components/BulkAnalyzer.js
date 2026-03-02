@@ -94,21 +94,31 @@ const BulkAnalyzer = () => {
     reader.onload = (e) => {
       try {
         if (file.name.endsWith('.csv')) {
-          const text = e.target.result;
-          const rows = text.split('\n').filter(row => row.trim());
-          const headers = rows[0].split(',').map(h => h.trim());
-          setOriginalHeaders(headers);
-          
-          const allData = rows.slice(1).map(row => {
-            const values = row.split(',').map(v => v.trim());
-            return headers.reduce((obj, header, index) => {
-              obj[header] = values[index] || '';
-              return obj;
-            }, {});
+          const workbook = XLSX.read(e.target.result, { type: 'string' });
+          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+          const jsonData = XLSX.utils.sheet_to_json(firstSheet, {
+            header: 1,
+            defval: '',
+            raw: false
           });
+
+          if (!jsonData.length) {
+            throw new Error('CSV file appears to be empty');
+          }
+
+          const headers = jsonData[0].map(h => String(h).trim());
+          setOriginalHeaders(headers);
+
+          const allData = jsonData.slice(1)
+            .filter(row => row.some(cell => String(cell || '').trim()))
+            .map(row => headers.reduce((obj, header, index) => {
+              obj[header] = row[index] || '';
+              return obj;
+            }, {}));
+
           setOriginalData(allData);
           setTotalRows(allData.length);
-          
+
           const previewData = allData.slice(0, 5);
           setPreview({ headers, data: previewData });
         } else {
@@ -178,10 +188,51 @@ const BulkAnalyzer = () => {
     });
 
     try {
-      // Process each row sequentially
+      const findPainPointValue = (row) => {
+        const painPointKey = Object.keys(row).find(
+          key => key && key.toString().trim().toLowerCase() === 'pain_point'
+        );
+
+        if (!painPointKey) {
+          return '';
+        }
+
+        return row[painPointKey];
+      };
+
+      const predictWithRetry = async (painPointText, maxRetries = 3) => {
+        let attempt = 0;
+
+        while (attempt < maxRetries) {
+          try {
+            return await axios.post(
+              `${BASE_URL}/predict?pain_point=${encodeURIComponent(painPointText)}`,
+              null,
+              {
+                signal: abortControllerRef.current.signal,
+                timeout: 45000
+              }
+            );
+          } catch (err) {
+            if (axios.isCancel(err)) {
+              throw err;
+            }
+
+            attempt += 1;
+            if (attempt >= maxRetries) {
+              throw err;
+            }
+
+            const backoffMs = 1500 * attempt;
+            await new Promise(resolve => setTimeout(resolve, backoffMs));
+          }
+        }
+      };
+
+      // Process each row sequentially and wait for each prediction
       for (let i = 0; i < originalData.length; i++) {
         const row = originalData[i];
-        const pain_point = row.pain_point || row['pain_point'] || '';
+        const pain_point = findPainPointValue(row);
         
         // Update current row
         setCurrentRow(i + 1);
@@ -210,15 +261,8 @@ const BulkAnalyzer = () => {
         }
 
         try {
-          // Call the /predict endpoint for each row
-          const response = await axios.post(
-            `${BASE_URL}/predict?pain_point=${encodeURIComponent(pain_point.toString().trim())}`,
-            null,
-            {
-              signal: abortControllerRef.current.signal,
-              timeout: 10000 // 10 second timeout per request
-            }
-          );
+          // Call /predict endpoint for each row with retries (Render free tier can cold-start)
+          const response = await predictWithRetry(pain_point.toString().trim());
 
           if (response.data) {
             const prediction = response.data.prediction;
