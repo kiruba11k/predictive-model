@@ -108,10 +108,16 @@ async def process_bulk_job(job_id: str):
     results = []
     successful = 0
     failed = 0
+    skipped = 0
     
     for idx, row in enumerate(job['data']):
         try:
-            pain_point = row.get('pain_point', '')
+            pain_point_key = next(
+                (key for key in row.keys() if str(key).strip().lower() == 'pain_point'),
+                None
+            )
+            pain_point = row.get(pain_point_key, '') if pain_point_key else ''
+
             if pain_point and str(pain_point).strip():
                 pred, prob = model.predict(str(pain_point).strip())
                 
@@ -128,6 +134,15 @@ async def process_bulk_job(job_id: str):
                     failed += 1
                     
                 results.append(result)
+            else:
+                results.append({
+                    'pain_point': pain_point,
+                    'prediction': 'Skipped',
+                    'probability': 0,
+                    'success_probability': 0,
+                    'note': 'Empty pain point - skipped'
+                })
+                skipped += 1
                 
                 # Save to database (optional, can be commented out for performance)
                 # db = SessionLocal()
@@ -158,6 +173,7 @@ async def process_bulk_job(job_id: str):
         job['results'] = results
         job['summary']['successful'] = successful
         job['summary']['failed'] = failed
+        job['summary']['skipped'] = skipped
         
         # Small delay to prevent overwhelming
         await asyncio.sleep(0.01)
@@ -167,7 +183,8 @@ async def process_bulk_job(job_id: str):
     job['summary'] = {
         'total': job['total'],
         'successful': successful,
-        'failed': failed
+        'failed': failed,
+        'skipped': skipped
     }
 
 @app.get("/bulk-status/{job_id}")
