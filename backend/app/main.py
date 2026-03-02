@@ -47,7 +47,41 @@ def get_predictor():
 # Store for bulk jobs
 bulk_jobs: Dict[str, dict] = {}
 
+def find_success_key(row: dict):
+    keys = list(row.keys())
 
+    # exact match
+    exact = next(
+        (key for key in keys if normalize_header(key) == 'success'),
+        None
+    )
+
+    if exact:
+        return exact
+
+    # flexible match
+    return next(
+        (
+            key for key in keys
+            if 'success' in normalize_header(key)
+            or 'actual' in normalize_header(key)
+            or 'result' in normalize_header(key)
+        ),
+        None
+    )
+
+
+def normalize_actual_value(value):
+    val = str(value).strip().lower()
+
+    if val in ["yes", "y", "1", "true", "success", "won"]:
+        return "Yes"
+
+    if val in ["no", "n", "0", "false", "failure", "lost"]:
+        return "No"
+
+    raise ValueError(f"Invalid success value: {value}")
+    
 def normalize_header(value: str) -> str:
     return ''.join(ch for ch in str(value).lower() if ch.isalnum())
 
