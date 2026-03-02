@@ -363,6 +363,82 @@ def learn(pain_point: str, actual: str):
         logger.error(f"Learning error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Learning failed: {str(e)}")
 
+
+@app.post("/learn-upload")
+async def learn_upload(file: UploadFile = File(...)):
+    """
+    Learn from uploaded CSV/Excel containing pain_point and Success columns.
+    """
+    try:
+        content = await file.read()
+
+        if file.filename.endswith('.csv'):
+            df = pd.read_csv(io.BytesIO(content))
+        elif file.filename.endswith(('.xlsx', '.xls')):
+            df = pd.read_excel(io.BytesIO(content))
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported file format")
+
+        if df.empty:
+            raise HTTPException(status_code=400, detail="Uploaded file has no rows")
+
+        records = df.to_dict('records')
+        first_row = records[0]
+        pain_point_key = find_pain_point_key(first_row)
+        success_key = find_success_key(first_row)
+
+        if not pain_point_key or not success_key:
+            raise HTTPException(
+                status_code=400,
+                detail="File must contain pain_point and Success columns"
+            )
+
+        model = get_predictor()
+
+        learning_items = []
+        learned = 0
+        skipped = 0
+        errors = []
+
+        for idx, row in enumerate(records):
+            try:
+                pain_point = str(row.get(pain_point_key, '') or '').strip()
+                actual_raw = row.get(success_key, '')
+
+                if not pain_point:
+                    skipped += 1
+                    continue
+
+                actual = normalize_actual_value(actual_raw)
+                learning_items.append((pain_point, actual))
+                learned += 1
+            except Exception as row_error:
+                skipped += 1
+                if len(errors) < 20:
+                    errors.append({
+                        'row': idx + 2,
+                        'error': str(row_error)
+                    })
+
+        if learning_items:
+            model.learn_batch(learning_items)
+
+        return {
+            'status': 'completed',
+            'total': len(records),
+            'learned': learned,
+            'skipped': skipped,
+            'pain_point_column': pain_point_key,
+            'success_column': success_key,
+            'errors': errors
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Learn upload error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Learn upload failed: {str(e)}")
+
 @app.get("/health")
 def health_check():
     """Check if server is healthy"""
