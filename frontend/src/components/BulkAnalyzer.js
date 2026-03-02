@@ -31,645 +31,155 @@ import {
   PieChart, Pie, Cell
 } from 'recharts';
 
+import React, { useState, useRef } from 'react';
+import axios from 'axios';
+import * as XLSX from 'xlsx';
+import { FaCloudUploadAlt, FaDownload, FaSpinner, FaCheckCircle, FaExclamationTriangle } from 'react-icons/fa';
+
 const BulkAnalyzer = () => {
-  const [file, setFile] = useState(null);
-  const [processing, setProcessing] = useState(false);
-  const [results, setResults] = useState(null);
-  const [originalData, setOriginalData] = useState(null);
-  const [originalHeaders, setOriginalHeaders] = useState([]);
-  const [error, setError] = useState(null);
-  const [preview, setPreview] = useState([]);
-  const [activeTab, setActiveTab] = useState('table');
-  const [progress, setProgress] = useState(0);
-  const [estimatedTime, setEstimatedTime] = useState(null);
-  const [startTime, setStartTime] = useState(null);
-  const [serverStatus, setServerStatus] = useState('checking');
-  const [jobInfo, setJobInfo] = useState(null);
-  const [currentRow, setCurrentRow] = useState(0);
-  const [totalRows, setTotalRows] = useState(0);
-  const fileInputRef = useRef(null);
-  const abortControllerRef = useRef(null);
+    const [file, setFile] = useState(null);
+    const [status, setStatus] = useState('idle'); // idle, processing, completed, error
+    const [progress, setProgress] = useState(0);
+    const [results, setResults] = useState(null);
+    const [error, setError] = useState(null);
+    const fileInputRef = useRef(null);
 
-  const BASE_URL = 'https://predictive-model-backend.onrender.com';
-  const COLORS = ['#00ffff', '#ff00ff', '#00ff88', '#ff8800', '#8884d8'];
+    // Update this to your actual Render Backend URL
+    const BASE_URL = 'https://predictive-model-backend.onrender.com';
 
-  // Check server health on component mount
-  React.useEffect(() => {
-    checkServerHealth();
-  }, []);
-
-  const checkServerHealth = async () => {
-    try {
-      const response = await axios.get(`${BASE_URL}/health`, { timeout: 5000 });
-      if (response.status === 200) {
-        setServerStatus('online');
-        setError(null);
-      } else {
-        setServerStatus('offline');
-      }
-    } catch (err) {
-      console.error('Server health check failed:', err);
-      setServerStatus('offline');
-    }
-  };
-
-  const handleFileUpload = (event) => {
-    const file = event.target.files[0];
-    if (file) {
-      if (file.type === 'text/csv' || file.name.endsWith('.csv') || 
-          file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || 
-          file.name.endsWith('.xlsx')) {
-        setFile(file);
-        setError(null);
-        setResults(null);
-        previewFile(file);
-      } else {
-        setError('Please upload a CSV or Excel file');
-      }
-    }
-  };
-
-  const previewFile = (file) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        if (file.name.endsWith('.csv')) {
-          const text = e.target.result;
-          const rows = text.split('\n').filter(row => row.trim());
-          const headers = rows[0].split(',').map(h => h.trim());
-          setOriginalHeaders(headers);
-          
-          const allData = rows.slice(1).map(row => {
-            const values = row.split(',').map(v => v.trim());
-            return headers.reduce((obj, header, index) => {
-              obj[header] = values[index] || '';
-              return obj;
-            }, {});
-          });
-          setOriginalData(allData);
-          setTotalRows(allData.length);
-          
-          const previewData = allData.slice(0, 5);
-          setPreview({ headers, data: previewData });
-        } else {
-          const data = new Uint8Array(e.target.result);
-          const workbook = XLSX.read(data, { type: 'array' });
-          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-          const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
-          const headers = jsonData[0].map(h => String(h).trim());
-          setOriginalHeaders(headers);
-          
-          const allData = jsonData.slice(1).map(row => {
-            return headers.reduce((obj, header, index) => {
-              obj[header] = row[index] || '';
-              return obj;
-            }, {});
-          });
-          setOriginalData(allData);
-          setTotalRows(allData.length);
-          
-          const previewData = allData.slice(0, 5);
-          setPreview({ headers, data: previewData });
+    const handleFileChange = (e) => {
+        const selected = e.target.files[0];
+        if (selected) {
+            setFile(selected);
+            setResults(null);
+            setError(null);
+            setStatus('idle');
         }
-      } catch (err) {
-        console.error('Preview error:', err);
-        setError('Error previewing file');
-      }
     };
 
-    if (file.name.endsWith('.csv')) {
-      reader.readAsText(file);
-    } else {
-      reader.readAsArrayBuffer(file);
-    }
-  };
+    const startAnalysis = async () => {
+        if (!file) return;
+        setStatus('processing');
+        setProgress(0);
+        setError(null);
 
-  const processBulkAnalysis = async () => {
-    if (!file) {
-      setError('Please select a file first');
-      return;
-    }
-
-    if (serverStatus === 'offline') {
-      setError('Server is offline. Please wait for it to start up.');
-      return;
-    }
-
-    // Create abort controller for cancellation
-    abortControllerRef.current = new AbortController();
-
-    setProcessing(true);
-    setProgress(0);
-    setError(null);
-    setResults(null);
-    setStartTime(Date.now());
-    setEstimatedTime(null);
-    setCurrentRow(0);
-
-    const results_array = [];
-    let successful = 0;
-    let failed = 0;
-    let skipped = 0;
-
-    setJobInfo({
-      total: totalRows,
-      current: 0,
-      message: `Processing ${totalRows} records...`
-    });
-
-    try {
-      // Process each row sequentially
-      for (let i = 0; i < originalData.length; i++) {
-        const row = originalData[i];
-        const pain_point = row.pain_point || row['pain_point'] || '';
-        
-        // Update current row
-        setCurrentRow(i + 1);
-        
-        // Skip empty pain points
-        if (!pain_point || !pain_point.toString().trim()) {
-          results_array.push({
-            ...row,
-            prediction: 'Skipped',
-            probability: 0,
-            success_probability: 0,
-            confidence: 'N/A',
-            note: 'Empty pain point - skipped'
-          });
-          skipped++;
-          
-          // Update progress
-          const progressPercent = Math.round(((i + 1) / totalRows) * 100);
-          setProgress(progressPercent);
-          setJobInfo(prev => ({
-            ...prev,
-            current: i + 1,
-            progress: progressPercent
-          }));
-          continue;
-        }
+        const formData = new FormData();
+        formData.append('file', file);
 
         try {
-          // Call the /predict endpoint for each row
-          const response = await axios.post(
-            `${BASE_URL}/predict?pain_point=${encodeURIComponent(pain_point.toString().trim())}`,
-            null,
-            {
-              signal: abortControllerRef.current.signal,
-              timeout: 10000 // 10 second timeout per request
-            }
-          );
+            // 1. Initial Upload to get Job ID
+            const { data } = await axios.post(`${BASE_URL}/upload-bulk`, formData);
+            const jobId = data.jobId;
 
-          if (response.data) {
-            const prediction = response.data.prediction;
-            const probability = response.data.probability;
-            
-            if (prediction === 'Success') {
-              successful++;
-            } else {
-              failed++;
-            }
+            // 2. Poll Status every 2.5 seconds
+            const poll = setInterval(async () => {
+                try {
+                    const response = await axios.get(`${BASE_URL}/bulk-status/${jobId}`);
+                    const job = response.data;
 
-            results_array.push({
-              ...row,
-              prediction: prediction,
-              probability: probability,
-              success_probability: prediction === 'Success' ? probability : 1 - probability,
-              confidence: probability > 0.8 ? 'High' : probability > 0.5 ? 'Medium' : 'Low'
-            });
-          }
+                    setProgress(job.progress);
+
+                    if (job.status === 'completed') {
+                        clearInterval(poll);
+                        setResults(job.results);
+                        setStatus('completed');
+                    } else if (job.status === 'failed') {
+                        clearInterval(poll);
+                        setError(job.error || "Analysis failed on server.");
+                        setStatus('error');
+                    }
+                } catch (e) {
+                    console.error("Polling error", e);
+                    // Don't clear interval yet, server might be momentarily slow
+                }
+            }, 2500);
+
         } catch (err) {
-          console.error(`Error processing row ${i + 1}:`, err);
-          
-          if (axios.isCancel(err)) {
-            // Request was cancelled
-            setProcessing(false);
-            return;
-          }
-
-          results_array.push({
-            ...row,
-            prediction: 'Error',
-            probability: 0,
-            success_probability: 0,
-            confidence: 'N/A',
-            error: err.message || 'Request failed'
-          });
-          failed++;
+            setError("Server is likely waking up. Please wait 30 seconds and try again.");
+            setStatus('error');
         }
+    };
 
-        // Update progress
-        const progressPercent = Math.round(((i + 1) / totalRows) * 100);
-        setProgress(progressPercent);
-        setJobInfo(prev => ({
-          ...prev,
-          current: i + 1,
-          progress: progressPercent
-        }));
-
-        // Calculate estimated time remaining
-        if (i > 0 && startTime) {
-          const elapsedSeconds = (Date.now() - startTime) / 1000;
-          const avgTimePerRow = elapsedSeconds / (i + 1);
-          const remainingRows = totalRows - (i + 1);
-          const remainingSeconds = avgTimePerRow * remainingRows;
-          
-          if (remainingSeconds > 0 && remainingSeconds < 3600) {
-            const minutes = Math.floor(remainingSeconds / 60);
-            const seconds = Math.floor(remainingSeconds % 60);
-            setEstimatedTime(`${minutes}m ${seconds}s`);
-          }
-        }
-
-        // Small delay to prevent overwhelming the server
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-
-      // All rows processed
-      const summary = {
-        total: totalRows,
-        successful: successful,
-        failed: failed,
-        skipped: skipped,
-        successRate: successful > 0 ? (successful / (successful + failed) * 100) : 0
-      };
-
-      setResults({
-        predictions: results_array,
-        summary: summary
-      });
-      
-      setProcessing(false);
-      setProgress(100);
-
-    } catch (err) {
-      console.error('Bulk processing error:', err);
-      setError(err.message || 'Failed to process bulk data');
-      setProcessing(false);
-    }
-  };
-
-  const cancelProcessing = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      setProcessing(false);
-      setError('Processing cancelled by user');
-    }
-  };
-
-  const downloadResults = () => {
-    if (!results || !originalData) return;
-
-    try {
-      // Create worksheet with all data
-      const ws = XLSX.utils.json_to_sheet(results.predictions);
-      
-      // Create workbook
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Predictions');
-      
-      // Add summary sheet
-      const summaryData = [
-        ['Bulk Prediction Summary'],
-        ['Generated:', new Date().toLocaleString()],
-        [''],
-        ['Total Records', results.summary.total],
-        ['Successful Predictions', results.summary.successful],
-        ['Failed Predictions', results.summary.failed],
-        ['Skipped Rows', results.summary.skipped],
-        ['Success Rate', `${results.summary.successRate.toFixed(2)}%`]
-      ];
-      
-      const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
-      XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
-      
-      // Save file
-      XLSX.writeFile(wb, `bulk-predictions-${new Date().toISOString().split('T')[0]}.xlsx`);
-    } catch (err) {
-      console.error('Download error:', err);
-      setError('Failed to download results');
-    }
-  };
-
-  const renderServerStatus = () => {
-    if (serverStatus === 'checking') {
-      return (
-        <div className="server-status checking">
-          <FaSpinner className="spinner" />
-          <span>Checking server connection...</span>
-        </div>
-      );
-    } else if (serverStatus === 'offline') {
-      return (
-        <div className="server-status offline">
-          <FaExclamationCircle />
-          <span>Server is offline. Please try again later.</span>
-        </div>
-      );
-    }
-    return null;
-  };
-
-  const renderSummary = () => {
-    if (!results) return null;
-
-    const summary = results.summary;
+    const downloadExcel = () => {
+        if (!results) return;
+        // Converts JSON results back to an Excel Sheet
+        const ws = XLSX.utils.json_to_sheet(results);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Lead Predictions");
+        
+        // Triggers Browser Download
+        XLSX.writeFile(wb, `Lead_Analysis_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
+    };
 
     return (
-      <div className="summary-cards">
-        <div className="summary-card">
-          <FaDatabase className="summary-icon" />
-          <div className="summary-content">
-            <h3>Total Records</h3>
-            <p className="summary-value">{summary.total}</p>
-          </div>
-        </div>
-        <div className="summary-card">
-          <FaCheck className="summary-icon success-icon" />
-          <div className="summary-content">
-            <h3>Successful</h3>
-            <p className="summary-value success">{summary.successful}</p>
-          </div>
-        </div>
-        <div className="summary-card">
-          <FaTimes className="summary-icon failure-icon" />
-          <div className="summary-content">
-            <h3>Failed</h3>
-            <p className="summary-value failure">{summary.failed}</p>
-          </div>
-        </div>
-        <div className="summary-card">
-          <FaBan className="summary-icon skip-icon" />
-          <div className="summary-content">
-            <h3>Skipped</h3>
-            <p className="summary-value skipped">{summary.skipped}</p>
-          </div>
-        </div>
-        <div className="summary-card">
-          <FaPercentage className="summary-icon rate-icon" />
-          <div className="summary-content">
-            <h3>Success Rate</h3>
-            <p className="summary-value">{summary.successRate.toFixed(2)}%</p>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderTable = () => {
-    if (!results || !originalData) return null;
-
-    const previewData = results.predictions.slice(0, 10);
-    const allHeaders = [...originalHeaders, 'Prediction', 'Probability', 'Success Probability', 'Confidence', 'Note'];
-
-    return (
-      <div className="table-container">
-        <table className="results-table">
-          <thead>
-            <tr>
-              {allHeaders.map((header, index) => (
-                <th key={index}>{header}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {previewData.map((row, rowIndex) => (
-              <tr key={rowIndex}>
-                {originalHeaders.map((header, colIndex) => (
-                  <td key={colIndex}>{row[header]}</td>
-                ))}
-                <td>
-                  <span className={`prediction-badge ${row.prediction?.toLowerCase()}`}>
-                    {row.prediction === 'Success' && <FaCheck />}
-                    {row.prediction === 'Failure' && <FaTimes />}
-                    {row.prediction === 'Skipped' && <FaBan />}
-                    {row.prediction === 'Error' && <FaExclamationCircle />}
-                    {row.prediction}
-                  </span>
-                </td>
-                <td>{row.probability ? `${(row.probability * 100).toFixed(2)}%` : 'N/A'}</td>
-                <td>{row.success_probability ? `${(row.success_probability * 100).toFixed(2)}%` : 'N/A'}</td>
-                <td>
-                  <span className={`confidence-badge ${row.confidence?.toLowerCase()}`}>
-                    {row.confidence}
-                  </span>
-                </td>
-                <td>{row.note || row.error || ''}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {totalRows > 10 && (
-          <div className="table-note">
-            Showing first 10 of {totalRows} records. Download Excel for complete results.
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  const renderCharts = () => {
-    if (!results) return null;
-
-    const summary = results.summary;
-
-    const pieData = [
-      { name: 'Successful', value: summary.successful },
-      { name: 'Failed', value: summary.failed },
-      { name: 'Skipped', value: summary.skipped }
-    ].filter(item => item.value > 0);
-
-    return (
-      <div className="charts-container">
-        <div className="chart-card">
-          <h3>Distribution Results</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <PieChart>
-              <Pie
-                data={pieData}
-                cx="50%"
-                cy="50%"
-                labelLine={false}
-                label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
-                outerRadius={80}
-                dataKey="value"
-              >
-                {pieData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-    );
-  };
-
-  return (
-    <div className="bulk-analyzer">
-      <div className="bulk-header">
-        <h2>
-          <FaMagic /> Bulk Analysis
-        </h2>
-        <p>Upload a CSV or Excel file - each row will be processed using the /predict endpoint</p>
-      </div>
-
-      {renderServerStatus()}
-
-      <div className="upload-section">
-        <div 
-          className={`upload-area ${file ? 'file-selected' : ''}`}
-          onClick={() => fileInputRef.current.click()}
-        >
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileUpload}
-            accept=".csv,.xlsx"
-            style={{ display: 'none' }}
-          />
-          <FaCloudUploadAlt className="upload-icon" />
-          <h3>
-            <FaUpload /> Click to upload
-          </h3>
-          <p>
-            <FaFileCsv /> <FaFileExcel /> CSV or Excel files only
-          </p>
-          {file && (
-            <div className="file-info">
-              {file.name.endsWith('.csv') ? <FaFileCsv /> : <FaFileExcel />}
-              <span>{file.name} ({totalRows} rows)</span>
-            </div>
-          )}
-        </div>
-
-        {error && (
-          <div className="error-message">
-            <FaExclamationTriangle />
-            <span>{error}</span>
-          </div>
-        )}
-
-        {preview.headers && !results && !processing && (
-          <div className="preview-section">
-            <h3>
-              <FaEye /> File Preview
-            </h3>
-            <div className="preview-table">
-              <table>
-                <thead>
-                  <tr>
-                    {preview.headers.map((header, index) => (
-                      <th key={index}>{header}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {preview.data.map((row, rowIndex) => (
-                    <tr key={rowIndex}>
-                      {preview.headers.map((header, colIndex) => (
-                        <td key={colIndex}>{row[header]}</td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        <div className="action-buttons">
-          <button
-            className="process-button"
-            onClick={processBulkAnalysis}
-            disabled={!file || processing || serverStatus === 'offline'}
-          >
-            {processing ? (
-              <>
-                <FaSpinner className="spinner" />
-                <span>Processing {currentRow}/{totalRows}... {progress}%</span>
-              </>
-            ) : (
-              <>
-                <FaPlay />
-                <span>Start Bulk Analysis</span>
-              </>
-            )}
-          </button>
-          
-          {processing && (
-            <button
-              className="cancel-button"
-              onClick={cancelProcessing}
-            >
-              <FaTimes />
-              Cancel
-            </button>
-          )}
-        </div>
-      </div>
-
-      {processing && (
-        <div className="progress-section">
-          <div className="progress-bar-container">
+        <div className="max-w-3xl mx-auto my-10 p-6 bg-white shadow-2xl rounded-2xl border border-gray-100">
+            <h2 className="text-3xl font-extrabold text-gray-800 mb-6 text-center">Bulk Analysis Tool</h2>
+            
+            {/* Upload Area */}
             <div 
-              className="progress-bar"
-              style={{ width: `${progress}%` }}
-            />
-            <span className="progress-text">{progress}% Complete</span>
-          </div>
-          
-          <div className="progress-info">
-            <FaHourglassHalf className="progress-info-icon" />
-            <span>
-              {estimatedTime ? (
-                <>Estimated time remaining: {estimatedTime}</>
-              ) : (
-                <>Processing row {currentRow} of {totalRows}...</>
-              )}
-            </span>
-          </div>
-        </div>
-      )}
-
-      {results && (
-        <div className="results-section">
-          <div className="results-header">
-            <h3>
-              <FaCheckCircle /> Analysis Complete!
-            </h3>
-            <button className="download-button" onClick={downloadResults}>
-              <FaFileExcel />
-              Download Excel Results
-            </button>
-          </div>
-
-          {renderSummary()}
-
-          <div className="tabs">
-            <button
-              className={`tab ${activeTab === 'table' ? 'active' : ''}`}
-              onClick={() => setActiveTab('table')}
+                className={`border-4 border-dashed p-12 rounded-xl text-center transition-all cursor-pointer ${
+                    file ? 'border-green-300 bg-green-50' : 'border-gray-200 hover:border-blue-400 bg-gray-50'
+                }`}
+                onClick={() => fileInputRef.current.click()}
             >
-              <FaTable /> Table View
-            </button>
-            <button
-              className={`tab ${activeTab === 'charts' ? 'active' : ''}`}
-              onClick={() => setActiveTab('charts')}
-            >
-              <FaChartPie /> Charts
-            </button>
-          </div>
+                <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".csv,.xlsx" />
+                <FaCloudUploadAlt className={`text-6xl mx-auto mb-4 ${file ? 'text-green-500' : 'text-gray-400'}`} />
+                <p className="text-lg font-medium text-gray-700">
+                    {file ? file.name : "Drop CSV/Excel file here or click to browse"}
+                </p>
+            </div>
 
-          <div className="tab-content">
-            {activeTab === 'table' && renderTable()}
-            {activeTab === 'charts' && renderCharts()}
-          </div>
+            {/* Action Button */}
+            {status === 'idle' && file && (
+                <button onClick={startAnalysis} className="w-full mt-6 bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-xl font-bold text-lg shadow-lg transition">
+                    Analyze {file.name}
+                </button>
+            )}
+
+            {/* Progress Bar */}
+            {status === 'processing' && (
+                <div className="mt-8">
+                    <div className="flex justify-between items-center mb-2">
+                        <span className="text-blue-600 font-bold animate-pulse">Processing Leads...</span>
+                        <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm font-bold">{progress}%</span>
+                    </div>
+                    <div className="w-full bg-gray-100 rounded-full h-5 overflow-hidden border border-gray-200">
+                        <div className="bg-blue-600 h-full transition-all duration-700 ease-out" style={{ width: `${progress}%` }}></div>
+                    </div>
+                    <p className="text-center text-gray-500 text-sm mt-4 flex items-center justify-center gap-2">
+                        <FaSpinner className="animate-spin" /> This may take a few minutes for large files.
+                    </p>
+                </div>
+            )}
+
+            {/* Results View */}
+            {status === 'completed' && (
+                <div className="mt-8 p-6 bg-green-50 rounded-xl border border-green-200 text-center animate-fadeIn">
+                    <FaCheckCircle className="text-green-500 text-5xl mx-auto mb-4" />
+                    <h3 className="text-2xl font-bold text-green-900 mb-2">Analysis Complete!</h3>
+                    <p className="text-green-700 mb-6">Successfully analyzed {results.length} rows.</p>
+                    <button 
+                        onClick={downloadExcel} 
+                        className="flex items-center gap-3 mx-auto bg-green-600 hover:bg-green-700 text-white px-8 py-3 rounded-xl font-bold shadow-md transition transform hover:scale-105"
+                    >
+                        <FaDownload /> Download Prediction Report
+                    </button>
+                </div>
+            )}
+
+            {/* Error Message */}
+            {status === 'error' && (
+                <div className="mt-6 p-4 bg-red-50 border border-red-200 text-red-700 rounded-xl flex items-start gap-3">
+                    <FaExclamationTriangle className="mt-1 flex-shrink-0" />
+                    <div>
+                        <p className="font-bold">Error Occurred</p>
+                        <p className="text-sm">{error}</p>
+                        <button onClick={() => setStatus('idle')} className="text-sm underline mt-2">Try again</button>
+                    </div>
+                </div>
+            )}
         </div>
-      )}
-    </div>
-  );
+    );
 };
 
 export default BulkAnalyzer;
