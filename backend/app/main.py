@@ -47,6 +47,26 @@ def get_predictor():
 # Store for bulk jobs
 bulk_jobs: Dict[str, dict] = {}
 
+
+def normalize_header(value: str) -> str:
+    return ''.join(ch for ch in str(value).lower() if ch.isalnum())
+
+
+def find_pain_point_key(row: dict):
+    keys = list(row.keys())
+
+    exact = next((key for key in keys if normalize_header(key) == 'painpoint'), None)
+    if exact:
+        return exact
+
+    return next(
+        (
+            key for key in keys
+            if 'pain' in normalize_header(key) and 'point' in normalize_header(key)
+        ),
+        None
+    )
+
 @app.post("/upload-bulk")
 async def upload_bulk(file: UploadFile = File(...)):
     """
@@ -108,10 +128,13 @@ async def process_bulk_job(job_id: str):
     results = []
     successful = 0
     failed = 0
+    skipped = 0
     
     for idx, row in enumerate(job['data']):
         try:
-            pain_point = row.get('pain_point', '')
+            pain_point_key = find_pain_point_key(row)
+            pain_point = row.get(pain_point_key, '') if pain_point_key else ''
+
             if pain_point and str(pain_point).strip():
                 pred, prob = model.predict(str(pain_point).strip())
                 
@@ -128,6 +151,15 @@ async def process_bulk_job(job_id: str):
                     failed += 1
                     
                 results.append(result)
+            else:
+                results.append({
+                    'pain_point': pain_point,
+                    'prediction': 'Skipped',
+                    'probability': 0,
+                    'success_probability': 0,
+                    'note': 'Empty pain point - skipped'
+                })
+                skipped += 1
                 
                 # Save to database (optional, can be commented out for performance)
                 # db = SessionLocal()
@@ -158,6 +190,7 @@ async def process_bulk_job(job_id: str):
         job['results'] = results
         job['summary']['successful'] = successful
         job['summary']['failed'] = failed
+        job['summary']['skipped'] = skipped
         
         # Small delay to prevent overwhelming
         await asyncio.sleep(0.01)
@@ -167,7 +200,8 @@ async def process_bulk_job(job_id: str):
     job['summary'] = {
         'total': job['total'],
         'successful': successful,
-        'failed': failed
+        'failed': failed,
+        'skipped': skipped
     }
 
 @app.get("/bulk-status/{job_id}")
