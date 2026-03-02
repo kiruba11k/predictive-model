@@ -47,6 +47,26 @@ def get_predictor():
 # Store for bulk jobs
 bulk_jobs: Dict[str, dict] = {}
 
+
+def normalize_header(value: str) -> str:
+    return ''.join(ch for ch in str(value).lower() if ch.isalnum())
+
+
+def find_pain_point_key(row: dict):
+    keys = list(row.keys())
+
+    exact = next((key for key in keys if normalize_header(key) == 'painpoint'), None)
+    if exact:
+        return exact
+
+    return next(
+        (
+            key for key in keys
+            if 'pain' in normalize_header(key) and 'point' in normalize_header(key)
+        ),
+        None
+    )
+
 @app.post("/upload-bulk")
 async def upload_bulk(file: UploadFile = File(...)):
     """

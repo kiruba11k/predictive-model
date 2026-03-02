@@ -73,6 +73,40 @@ const BulkAnalyzer = () => {
     }
   };
 
+  const normalizeHeader = (value) => String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+
+  const resolvePainPointHeader = (headers = []) => {
+    if (!headers.length) return null;
+
+    const exact = headers.find(h => normalizeHeader(h) === 'painpoint');
+    if (exact) return exact;
+
+    const fuzzy = headers.find(h => {
+      const normalized = normalizeHeader(h);
+      return normalized.includes('pain') && normalized.includes('point');
+    });
+
+    return fuzzy || null;
+  };
+
+  const buildRowsFromSheetData = (jsonData) => {
+    if (!jsonData?.length) {
+      throw new Error('File appears to be empty');
+    }
+
+    const headers = jsonData[0].map(h => String(h).trim());
+    const allData = jsonData.slice(1)
+      .filter(row => row.some(cell => String(cell ?? '').trim()))
+      .map(row => headers.reduce((obj, header, index) => {
+        obj[header] = row[index] ?? '';
+        return obj;
+      }, {}));
+
+    return { headers, allData };
+  };
+
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
     if (file) {
@@ -125,16 +159,14 @@ const BulkAnalyzer = () => {
           const data = new Uint8Array(e.target.result);
           const workbook = XLSX.read(data, { type: 'array' });
           const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-          const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
-          const headers = jsonData[0].map(h => String(h).trim());
-          setOriginalHeaders(headers);
-          
-          const allData = jsonData.slice(1).map(row => {
-            return headers.reduce((obj, header, index) => {
-              obj[header] = row[index] || '';
-              return obj;
-            }, {});
+          const jsonData = XLSX.utils.sheet_to_json(firstSheet, {
+            header: 1,
+            defval: '',
+            raw: false
           });
+          const { headers, allData } = buildRowsFromSheetData(jsonData);
+          setOriginalHeaders(headers);
+
           setOriginalData(allData);
           setTotalRows(allData.length);
           
