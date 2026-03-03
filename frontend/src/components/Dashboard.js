@@ -6,13 +6,7 @@ return (
 
 <div className="cards">
 
-
-
-<h3>Trained</h3>
-
-<p>XG Boost%</p>
-
-
+<h3>Trained on XG Boost</h3>
 
 </div>
 
