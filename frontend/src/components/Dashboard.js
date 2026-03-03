@@ -8,7 +8,7 @@ return (
 
 
 
-
+</div>
 
 <div className="card">
 
