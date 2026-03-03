@@ -7,31 +7,31 @@ return (
 <div className="cards">
 
 
-<div className="card">
+// <div className="card">
 
-<h3>Total Leads</h3>
+// <h3>Total Leads</h3>
 
-<p>1,284</p>
+// <p>1,284</p>
 
-</div>
-
-
-<div className="card">
-
-<h3>Success Rate</h3>
-
-<p>82%</p>
-
-</div>
+// </div>
 
 
 <div className="card">
 
-<h3>Accuracy</h3>
+// <h3>Success Rate</h3>
 
-<p>91%</p>
+// <p>82%</p>
 
-</div>
+// </div>
+
+
+// <div className="card">
+
+// <h3>Accuracy</h3>
+
+// <p>91%</p>
+
+// </div>
 
 
 </div>
